@@ -1,0 +1,9 @@
+Account Name:,Mr T Example
+Account Number:,****4321
+Statement Period:,01/09/2026 - 30/09/2026
+
+Transaction Date,Transaction Type,Description,Debit Amount,Credit Amount,Balance
+01/09/2026,BGC,ACME LTD SALARY,,2850.00,4373.45
+03/09/2026,DEB,TESCO STORES 3021,45.20,,4328.25
+14/09/2026,DD,"VIRGIN MEDIA, BROADBAND",38.00,,4290.25
+21/09/2026,FPO,TRANSFER TO SAVINGS,500.00,,3790.25

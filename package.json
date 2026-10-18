@@ -1,0 +1,45 @@
+{
+  "name": "statement-processor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Turn bank statements (PDF/CSV, any bank) into a clean transaction table — in the browser, no uploads, no LLM.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tahir606/statement-processor.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "predev": "node scripts/copy-pdf-worker.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/copy-pdf-worker.mjs",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "samples": "node scripts/make-sample-pdfs.mjs"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "next": "16.3.8",
+    "papaparse": "^5.7.0",
+    "pdfjs-dist": "^6.4.299",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22.20.5",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^5.0.3"
+  }
+}
