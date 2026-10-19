@@ -36,6 +36,7 @@ export function finalize(input: FinalizeInput): ParseResult {
     date: r.date,
     type: normalizeType(r.type ?? ""),
     description: r.description,
+    altDescription: "",
     amount: r.amount,
     balance: r.balance,
     category: "",

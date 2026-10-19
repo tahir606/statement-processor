@@ -18,6 +18,8 @@ export interface Transaction {
   /** Transaction type, e.g. "Direct Debit" — from the statement's Type column or inferred from the description. */
   type: string;
   description: string;
+  /** Set from the user's alt description rules; "" when no rule matches. */
+  altDescription: string;
   /** Signed: money in is positive, money out is negative. */
   amount: number;
   balance: number | null;

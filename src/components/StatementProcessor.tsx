@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { altDescriptionFor, compileRules, matchRule, newRuleId } from "@/lib/altRules";
 import { parseCsv } from "@/lib/csv";
 import { toCsv, toXlsx } from "@/lib/export";
 import { formatDate } from "@/lib/normalize";
 import type { ColumnRole, ParseResult, Transaction } from "@/lib/types";
+import AltRulesPanel from "./AltRulesPanel";
+import { useAltRules } from "./useAltRules";
 
 interface FileEntry {
   id: string;
@@ -40,8 +43,13 @@ export default function StatementProcessor() {
   const [query, setQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [missingAltOnly, setMissingAltOnly] = useState(false);
+  const { rules, setRules, storage: rulesStorage } = useAltRules();
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const compiled = useMemo(() => compileRules(rules), [rules]);
 
   const update = (id: string, patch: Partial<FileEntry>) =>
     setFiles((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
@@ -87,14 +95,32 @@ export default function StatementProcessor() {
       if (other && other !== t.sourceFile) out[i] = { ...t, flags: [...t.flags, `Possible duplicate of a row in ${other}`] };
       else seen.set(key, t.sourceFile);
     }
+    for (const [i, t] of out.entries()) out[i] = { ...t, altDescription: altDescriptionFor(t.description, compiled) };
     return out.sort((a, b) => a.date.localeCompare(b.date));
-  }, [files, edits]);
+  }, [files, edits, compiled]);
+
+  const { matchCounts, unmatchedCount } = useMemo(() => {
+    const counts = rules.map(() => 0);
+    let unmatched = 0;
+    for (const t of allTxns) {
+      const i = matchRule(t.description, compiled);
+      if (i === -1) unmatched++;
+      else counts[i]++;
+    }
+    return { matchCounts: counts, unmatchedCount: unmatched };
+  }, [allTxns, compiled, rules]);
+
+  const addRuleFrom = (description: string) => {
+    setRules((rs) => [...rs, { id: newRuleId(), pattern: description, regex: false, alt: "" }]);
+    setRulesOpen(true);
+  };
 
   const visible = allTxns.filter(
     (t) =>
       (fileFilter === "all" || t.sourceFile === fileFilter) &&
       (!flaggedOnly || t.flags.length > 0) &&
-      (!query || `${t.type} ${t.description}`.toLowerCase().includes(query.toLowerCase())),
+      (!missingAltOnly || !t.altDescription) &&
+      (!query || `${t.type} ${t.description} ${t.altDescription}`.toLowerCase().includes(query.toLowerCase())),
   );
 
   const totals = useMemo(() => {
@@ -176,6 +202,18 @@ export default function StatementProcessor() {
         </section>
       )}
 
+      <AltRulesPanel
+        rules={rules}
+        compiled={compiled}
+        onChange={setRules}
+        matchCounts={matchCounts}
+        unmatchedCount={unmatchedCount}
+        hasTransactions={allTxns.length > 0}
+        storage={rulesStorage}
+        open={rulesOpen}
+        onToggle={() => setRulesOpen((o) => !o)}
+      />
+
       {allTxns.length > 0 && (
         <>
           <section className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -202,13 +240,14 @@ export default function StatementProcessor() {
             </section>
           )}
 
+
           <section className="mt-6">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search type or description"
-                className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
+                placeholder="Search type, description or alt"
+                className="min-w-[12rem] flex-1 basis-56 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
               />
               <select
                 value={fileFilter}
@@ -226,6 +265,10 @@ export default function StatementProcessor() {
                 <input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} />
                 Flagged only ({flaggedCount})
               </label>
+              <label className="flex items-center gap-1.5 text-sm">
+                <input type="checkbox" checked={missingAltOnly} onChange={(e) => setMissingAltOnly(e.target.checked)} />
+                Missing alt ({unmatchedCount})
+              </label>
               <button onClick={exportXlsx} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">
                 Export Excel
               </button>
@@ -241,8 +284,9 @@ export default function StatementProcessor() {
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2">Type</th>
                     <th className="px-3 py-2">Description</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
+                    <th className="px-3 py-2">Alt Description</th>
                     <th className="px-3 py-2 text-right">Credit</th>
+                    <th className="px-3 py-2 text-right">Debit</th>
                     <th className="px-3 py-2 text-right">Balance</th>
                     <th className="px-3 py-2" />
                   </tr>
@@ -264,11 +308,22 @@ export default function StatementProcessor() {
                         ))}
                         <div className="text-xs text-zinc-400">{t.sourceFile}</div>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600 dark:text-red-400">
-                        {t.amount < 0 ? fmt(-t.amount) : ""}
+                      <td className="px-3 py-1.5">
+                        {t.altDescription || (
+                          <button
+                            onClick={() => addRuleFrom(t.description)}
+                            title="Add a rule pre-filled with this description"
+                            className="text-xs text-zinc-400 hover:text-blue-600"
+                          >
+                            + rule
+                          </button>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-green-700 dark:text-green-400">
                         {t.amount > 0 ? fmt(t.amount) : ""}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600 dark:text-red-400">
+                        {t.amount < 0 ? fmt(-t.amount) : ""}
                       </td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-zinc-500">{t.balance != null ? fmt(t.balance) : ""}</td>
                       <td className="px-2 py-1.5 text-right">

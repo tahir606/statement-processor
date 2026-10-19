@@ -46,3 +46,6 @@ public/pdf.worker.min.mjs
 
 # local tooling
 .claude/
+
+# alt description rules (personal; saved by the app)
+/data/

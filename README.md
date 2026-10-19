@@ -4,14 +4,15 @@ Turn bank statements (PDF or CSV, from any bank) into one clean transaction tabl
 
 Everything runs in your browser. Statements are parsed with layout analysis and classic OCR (Tesseract), not an LLM. Each row is then checked against the statement's running balance, so misreads are caught instead of passing through silently.
 
-**Output:** `Date, Type, Description, Debit, Credit, Balance`, with dates as `DD-Mmm-YY` (e.g. `05-Oct-26`). Export to Excel or CSV.
+**Output:** `Date, Type, Description, Alt Description, Credit, Debit, Balance`, with dates as `DD-Mmm-YY` (e.g. `05-Oct-26`). Export to Excel or CSV.
 
 ## Features
 
 - **Many banks, one format.** Auto-detects column layouts, date formats (day/month vs month/day, with or without a year) and number formats (`1,234.56`, `1.234,56`, `(12.00)`, `12.00 DR`).
 - **CSV, text PDF and scanned PDF.** Downloaded PDFs are read from their text layer. Scanned pages are deskewed, cleaned up and OCR'd.
 - **Built-in checking.** Every row is checked against the running balance (`previous balance + amount = balance`). It also flags dates out of sequence, low OCR confidence, and the same transaction appearing in two files.
-- **Private by design.** No server and no uploads. Files never leave your machine.
+- **Private by design.** Statements are parsed in your browser and never uploaded. The only thing the app's local server stores is your alt description rules, in a file on your own disk.
+- **Your own labels.** Alt description rules map words or patterns to your own descriptions for internal analysis.
 - **Easy to extend.** Add a bank with a small profile, and edit transaction types and categories as plain rules.
 
 ## Getting started
@@ -50,6 +51,27 @@ Then, for every file:
 - **Order detection:** newest-first statements are reversed.
 - **Type:** taken from the statement's own Type column, with codes like `DD` and `BGC` expanded to readable names. Without one, it's inferred from the description (see [`txnType.ts`](src/lib/txnType.ts)).
 
+## Alt description rules
+
+Use the **Alt description rules** panel (available before you upload anything) to label transactions your own way, e.g. `tesco` → `Food - Supermarket`. The label appears in the **Alt Description** column and in exports.
+
+- A rule is a word (case-insensitive "contains") or, with **Regex** ticked, a regular expression (also case-insensitive), matched against the description.
+- Rules are checked top to bottom, and the first match wins. Use ↑/↓ to reorder them.
+- Unmatched rows are left blank. Use **Missing alt** to list them, and click **+ rule** on a row to start a rule from its description.
+- **Rules are saved permanently** to `data/alt-rules.json` on the computer running the app. Every edit saves automatically, and clearing your browser data doesn't affect them. To keep them somewhere else (e.g. a synced folder), set `ALT_RULES_FILE=/path/to/rules.json` before `npm run dev`. `data/` is gitignored, so your rules never end up in a commit.
+- If the app is deployed without its server (a static export), rules fall back to browser storage and the panel says so.
+- Use **Export JSON** / **Import JSON** to back up rules or move them to another machine. Importing adds to your existing rules and skips duplicates.
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "pattern": "tesco", "regex": false, "alt": "Food - Supermarket" },
+    { "pattern": "^ATM\\b", "regex": true, "alt": "Cash" }
+  ]
+}
+```
+
 ## Adding a bank
 
 Most layouts are auto-detected. When one isn't, add a profile in [`src/lib/profiles.ts`](src/lib/profiles.ts):
@@ -79,6 +101,8 @@ CSV columns can also be remapped in the UI ("Column mapping"). Please contribute
 | `src/lib/finalize.ts`, `reconcile.ts` | Ordering, signs, balance check, flags |
 | `src/lib/profiles.ts` | Per-bank overrides |
 | `src/lib/txnType.ts`, `categorize.ts` | Transaction type and category rules |
+| `src/lib/altRules.ts` | Alt description rule matching and JSON import/export |
+| `src/app/api/rules/route.ts`, `src/lib/server/rulesStore.ts` | Saves rules to `data/alt-rules.json` |
 | `src/lib/export.ts` | Excel and CSV export |
 | `src/components/StatementProcessor.tsx` | UI |
 | `tests/` | Vitest tests; `samples/` holds the fake statements they run against |
