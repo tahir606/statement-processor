@@ -53,6 +53,8 @@ Then, for every file:
 
 ## Alt description rules
 
+Full guide: [docs/alt-description-rules.md](docs/alt-description-rules.md).
+
 Use the **Alt description rules** panel (available before you upload anything) to label transactions your own way, e.g. `tesco` → `Food - Supermarket`. The label appears in the **Alt Description** column and in exports.
 
 - A rule is a word (case-insensitive "contains") or, with **Regex** ticked, a regular expression (also case-insensitive), matched against the description.
