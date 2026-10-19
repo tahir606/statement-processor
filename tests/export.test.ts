@@ -33,3 +33,25 @@ describe("toXlsx", () => {
     expect(ws.getCell("F2").value).toBe(12.5); // Debit
   });
 });
+
+describe("export with alt description as description", () => {
+  const rows = [{ ...t(-12.5, "Card payment TESCO STORES"), altDescription: "Food - Supermarket" }, t(40, "Refund")];
+
+  it("CSV: swaps in the alt description only where one exists", () => {
+    expect(toCsv(rows, { useAltDescription: true }).split("\n").slice(1)).toEqual([
+      "01-Sep-26,Card Payment,Food - Supermarket,Food - Supermarket,,12.50,100.00",
+      "01-Sep-26,Card Payment,Refund,,40.00,,100.00",
+    ]);
+    expect(toCsv(rows).split("\n")[1]).toContain("Card payment TESCO STORES"); // off by default
+  });
+
+  it("Excel: same swap in the Description column", async () => {
+    const { Workbook } = await import("exceljs");
+    const { toXlsx } = await import("@/lib/export");
+    const wb = new Workbook();
+    await wb.xlsx.load(await (await toXlsx(rows, { useAltDescription: true })).arrayBuffer());
+    const ws = wb.getWorksheet("Transactions")!;
+    expect(ws.getCell("C2").value).toBe("Food - Supermarket");
+    expect(ws.getCell("C3").value).toBe("Refund");
+  });
+});

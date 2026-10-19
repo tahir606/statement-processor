@@ -1,29 +1,21 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { CircleCheck, Download, Lock, ScanText, Search, Tags, TriangleAlert, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { altDescriptionFor, compileRules, matchRule, newRuleId } from "@/lib/altRules";
 import { parseCsv } from "@/lib/csv";
 import { toCsv, toXlsx } from "@/lib/export";
-import { formatDate } from "@/lib/normalize";
 import type { ColumnRole, ParseResult, Transaction } from "@/lib/types";
-import AltRulesPanel from "./AltRulesPanel";
+import Breakdown from "./Breakdown";
+import ExportMenu from "./ExportMenu";
+import FileList, { type FileEntry } from "./FileList";
+import RulesDrawer from "./RulesDrawer";
+import TransactionsTable from "./TransactionsTable";
+import { Button, Card, Segmented, cx, fmt } from "./ui";
 import { useAltRules } from "./useAltRules";
+import { useExportPreference } from "./useExportPreference";
 
-interface FileEntry {
-  id: string;
-  file: File;
-  status: "processing" | "done" | "error";
-  progress?: string;
-  result?: ParseResult;
-  error?: string;
-  /** User-chosen column roles (CSV only). */
-  roleOverrides?: ColumnRole[];
-  showMapping?: boolean;
-}
-
-const ROLES: ColumnRole[] = ["date", "description", "amount", "debit", "credit", "balance", "type", "ignore"];
-
-const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+type View = "all" | "review" | "missing";
 
 async function processFile(entry: FileEntry, onProgress: (msg: string) => void): Promise<ParseResult> {
   const name = entry.file.name;
@@ -42,20 +34,20 @@ export default function StatementProcessor() {
   const [edits, setEdits] = useState<Record<string, Partial<Transaction> & { deleted?: boolean }>>({});
   const [query, setQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
-  const [flaggedOnly, setFlaggedOnly] = useState(false);
-  const [missingAltOnly, setMissingAltOnly] = useState(false);
+  const [view, setView] = useState<View>("all");
+  const [useAltInExport, setUseAltInExport] = useExportPreference();
   const { rules, setRules, storage: rulesStorage } = useAltRules();
   const [rulesOpen, setRulesOpen] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const [focusRuleId, setFocusRuleId] = useState<string>();
+  const dragging = useFileDrop((list) => addFiles(list));
   const inputRef = useRef<HTMLInputElement>(null);
 
   const compiled = useMemo(() => compileRules(rules), [rules]);
 
-  const update = (id: string, patch: Partial<FileEntry>) =>
-    setFiles((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  const update = (id: string, patch: Partial<FileEntry>) => setFiles((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
 
   const run = useCallback(async (entry: FileEntry) => {
-    update(entry.id, { status: "processing", progress: "Processing…", error: undefined });
+    update(entry.id, { status: "processing", progress: "Reading…", error: undefined });
     try {
       const result = await processFile(entry, (progress) => update(entry.id, { progress }));
       update(entry.id, { status: "done", result, progress: undefined });
@@ -64,19 +56,16 @@ export default function StatementProcessor() {
     }
   }, []);
 
-  const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    const entries: FileEntry[] = [...list].map((file) => ({
-      id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
-      file,
-      status: "processing",
-    }));
+  function addFiles(list: FileList | File[] | null) {
+    const picked = [...(list ?? [])].filter((f) => /\.(pdf|csv)$/i.test(f.name) || /pdf|csv/.test(f.type));
+    if (!picked.length) return;
+    const entries: FileEntry[] = picked.map((file) => ({ id: `${file.name}-${file.size}-${crypto.randomUUID()}`, file, status: "processing" }));
     setFiles((fs) => [...fs, ...entries]);
-    // Run sequentially so OCR on big scans doesn't swamp the browser.
+    // Run one at a time so OCR on big scans doesn't swamp the browser.
     (async () => {
       for (const e of entries) await run(e);
     })();
-  };
+  }
 
   const allTxns = useMemo(() => {
     const out: Transaction[] = [];
@@ -99,37 +88,38 @@ export default function StatementProcessor() {
     return out.sort((a, b) => a.date.localeCompare(b.date));
   }, [files, edits, compiled]);
 
-  const { matchCounts, unmatchedCount } = useMemo(() => {
+  const matchCounts = useMemo(() => {
     const counts = rules.map(() => 0);
-    let unmatched = 0;
     for (const t of allTxns) {
       const i = matchRule(t.description, compiled);
-      if (i === -1) unmatched++;
-      else counts[i]++;
+      if (i !== -1) counts[i]++;
     }
-    return { matchCounts: counts, unmatchedCount: unmatched };
+    return counts;
   }, [allTxns, compiled, rules]);
 
-  const addRuleFrom = (description: string) => {
-    setRules((rs) => [...rs, { id: newRuleId(), pattern: description, regex: false, alt: "" }]);
-    setRulesOpen(true);
-  };
-
-  const visible = allTxns.filter(
+  const inFile = allTxns.filter((t) => fileFilter === "all" || t.sourceFile === fileFilter);
+  const reviewCount = inFile.filter((t) => t.flags.length).length;
+  const missingCount = inFile.filter((t) => !t.altDescription).length;
+  const q = query.trim().toLowerCase();
+  const visible = inFile.filter(
     (t) =>
-      (fileFilter === "all" || t.sourceFile === fileFilter) &&
-      (!flaggedOnly || t.flags.length > 0) &&
-      (!missingAltOnly || !t.altDescription) &&
-      (!query || `${t.type} ${t.description} ${t.altDescription}`.toLowerCase().includes(query.toLowerCase())),
+      (view === "all" || (view === "review" ? t.flags.length > 0 : !t.altDescription)) &&
+      (!q || `${t.type} ${t.description} ${t.altDescription}`.toLowerCase().includes(q)),
   );
 
-  const totals = useMemo(() => {
-    const moneyIn = visible.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-    const moneyOut = visible.filter((t) => t.amount < 0).reduce((s, t) => s - t.amount, 0);
-    const byCat = new Map<string, number>();
-    for (const t of visible) if (t.amount < 0) byCat.set(t.category, (byCat.get(t.category) ?? 0) - t.amount);
-    return { moneyIn, moneyOut, byCat: [...byCat.entries()].sort((a, b) => b[1] - a[1]) };
-  }, [visible]);
+  // Summary cards describe everything loaded (or the chosen statement); the table footer totals the current view.
+  const moneyIn = inFile.reduce((s, t) => s + Math.max(t.amount, 0), 0);
+  const moneyOut = inFile.reduce((s, t) => s + Math.max(-t.amount, 0), 0);
+
+  const openRules = (ruleId?: string) => {
+    setFocusRuleId(ruleId);
+    setRulesOpen(true);
+  };
+  const addRuleFrom = (description: string) => {
+    const rule = { id: newRuleId(), pattern: description, regex: false, alt: "" };
+    setRules((rs) => [...rs, rule]);
+    openRules(rule.id);
+  };
 
   const download = (blob: Blob, ext: string) => {
     const a = document.createElement("a");
@@ -138,319 +128,296 @@ export default function StatementProcessor() {
     a.click();
     URL.revokeObjectURL(a.href);
   };
-  const exportCsv = () => download(new Blob([toCsv(visible)], { type: "text/csv" }), "csv");
-  const exportXlsx = async () => download(await toXlsx(visible), "xlsx");
+  const exportOpts = { useAltDescription: useAltInExport };
 
-  const flaggedCount = allTxns.filter((t) => t.flags.length).length;
-  const maxCat = totals.byCat[0]?.[1] ?? 1;
+  const busy = files.some((f) => f.status === "processing");
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Statement Processor</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Drop bank statements (PDF or CSV). Everything runs in your browser — files are never uploaded.
-        </p>
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-40 border-b border-line bg-surface/85 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4 sm:px-6">
+          <div className="flex size-8 items-center justify-center rounded-lg bg-accent text-white dark:text-zinc-950">
+            <ScanText className="size-4" />
+          </div>
+          <span className="truncate font-semibold tracking-tight">Statement Processor</span>
+          <span className="hidden items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs text-muted md:inline-flex">
+            <Lock className="size-3" /> Processed on this computer
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button onClick={() => openRules()}>
+              <Tags className="size-4" /> Rules
+              <span className="rounded-md bg-zinc-100 px-1.5 text-xs tabular-nums text-muted dark:bg-zinc-800">{rules.length}</span>
+            </Button>
+            {files.length > 0 && (
+              <Button variant="primary" onClick={() => inputRef.current?.click()}>
+                <Upload className="size-4" /> <span className="hidden sm:inline">Add statements</span>
+              </Button>
+            )}
+          </div>
+        </div>
       </header>
 
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          addFiles(e.dataTransfer.files);
-        }}
-        onClick={() => inputRef.current?.click()}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition ${
-          dragging ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30" : "border-zinc-300 hover:border-zinc-400 dark:border-zinc-700"
-        }`}
-      >
-        <p className="font-medium">Drop statements here or click to choose</p>
-        <p className="mt-1 text-xs text-zinc-500">PDF (text or scanned) and CSV · multiple files and banks at once</p>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf,.csv,application/pdf,text/csv"
-          multiple
-          hidden
-          onChange={(e) => {
-            addFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
-      </div>
+      <main className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6">
+        {files.length === 0 ? (
+          <Welcome onBrowse={() => inputRef.current?.click()} onRules={() => openRules()} ruleCount={rules.length} />
+        ) : (
+          <div className="space-y-6">
+            <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <Stat label="Transactions" value={String(inFile.length)} hint={busy ? "Reading files…" : `from ${files.length} file${files.length === 1 ? "" : "s"}`} />
+              <Stat label="Money in" value={fmt(moneyIn)} tone="green" />
+              <Stat label="Money out" value={fmt(moneyOut)} />
+              <Stat label="Net" value={`${moneyIn - moneyOut < 0 ? "−" : ""}${fmt(Math.abs(moneyIn - moneyOut))}`} tone={moneyIn - moneyOut < 0 ? "red" : "green"} />
+              <button onClick={() => setView(reviewCount ? "review" : "all")} className="col-span-2 text-left md:col-span-1">
+                <Stat
+                  label="Needs review"
+                  value={String(reviewCount)}
+                  tone={reviewCount ? "amber" : "green"}
+                  hint={reviewCount ? "Show flagged rows" : "Nothing flagged"}
+                  icon={reviewCount ? <TriangleAlert className="size-4" /> : <CircleCheck className="size-4" />}
+                />
+              </button>
+            </section>
 
-      {files.length > 0 && (
-        <section className="mt-6 space-y-3">
-          {files.map((f) => (
-            <FileCard
-              key={f.id}
-              entry={f}
-              onRemove={() => setFiles((fs) => fs.filter((x) => x.id !== f.id))}
-              onToggleMapping={() => update(f.id, { showMapping: !f.showMapping })}
-              onApplyMapping={(roles) => {
-                const next = { ...f, roleOverrides: roles };
-                update(f.id, { roleOverrides: roles });
-                run(next);
-              }}
-            />
-          ))}
-        </section>
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-muted">Statements</h2>
+              <FileList
+                files={files}
+                onRemove={(id) => {
+                  const name = files.find((f) => f.id === id)?.file.name;
+                  setFiles((fs) => fs.filter((f) => f.id !== id));
+                  if (name === fileFilter) setFileFilter("all");
+                }}
+                onApplyMapping={(entry, roles: ColumnRole[]) => {
+                  const next = { ...entry, roleOverrides: roles };
+                  update(entry.id, { roleOverrides: roles });
+                  run(next);
+                }}
+              />
+            </section>
+
+            <section className="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="min-w-0 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-56 flex-1 sm:max-w-sm">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search description, type or label"
+                      aria-label="Search transactions"
+                      className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-3 text-sm shadow-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    />
+                  </div>
+                  <Segmented
+                    value={view}
+                    onChange={setView}
+                    options={[
+                      { value: "all", label: <>All <Count n={inFile.length} /></> },
+                      { value: "review", label: <>Needs review <Count n={reviewCount} tone={reviewCount ? "amber" : undefined} /></> },
+                      { value: "missing", label: <>No label <Count n={missingCount} /></> },
+                    ]}
+                  />
+                  {files.length > 1 && (
+                    <select
+                      value={fileFilter}
+                      onChange={(e) => setFileFilter(e.target.value)}
+                      aria-label="Filter by file"
+                      className="h-9 max-w-56 rounded-lg border border-line bg-surface px-2.5 text-sm shadow-sm"
+                    >
+                      <option value="all">All statements</option>
+                      {files.map((f) => (
+                        <option key={f.id} value={f.file.name}>
+                          {f.file.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="ml-auto">
+                    <ExportMenu
+                      count={visible.length}
+                      useAlt={useAltInExport}
+                      onUseAltChange={setUseAltInExport}
+                      onExcel={async () => download(await toXlsx(visible, exportOpts), "xlsx")}
+                      onCsv={() => download(new Blob([toCsv(visible, exportOpts)], { type: "text/csv" }), "csv")}
+                    />
+                  </div>
+                </div>
+                <TransactionsTable
+                  rows={visible}
+                  onDelete={(id) => setEdits((ed) => ({ ...ed, [id]: { ...ed[id], deleted: true } }))}
+                  onAddRule={addRuleFrom}
+                  emptyMessage={busy && !allTxns.length ? "Reading statements…" : "No transactions match this view."}
+                />
+              </div>
+              <aside className="2xl:sticky 2xl:top-20">
+                <Breakdown rows={visible} />
+              </aside>
+            </section>
+          </div>
+        )}
+      </main>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.csv,application/pdf,text/csv"
+        multiple
+        hidden
+        onChange={(e) => {
+          addFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+
+      {dragging && (
+        <div className="animate-fade-in pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-accent/10 p-6 backdrop-blur-sm">
+          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-accent bg-surface px-16 py-12 text-center shadow-xl">
+            <Upload className="size-8 text-accent" />
+            <p className="mt-3 text-lg font-semibold">Drop to add statements</p>
+            <p className="mt-1 text-sm text-muted">PDF or CSV, from any bank</p>
+          </div>
+        </div>
       )}
 
-      <AltRulesPanel
+      <RulesDrawer
+        open={rulesOpen}
+        onClose={() => setRulesOpen(false)}
         rules={rules}
         compiled={compiled}
         onChange={setRules}
         matchCounts={matchCounts}
-        unmatchedCount={unmatchedCount}
         hasTransactions={allTxns.length > 0}
         storage={rulesStorage}
-        open={rulesOpen}
-        onToggle={() => setRulesOpen((o) => !o)}
+        focusRuleId={focusRuleId}
       />
-
-      {allTxns.length > 0 && (
-        <>
-          <section className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Transactions" value={String(visible.length)} />
-            <Stat label="Money in" value={fmt(totals.moneyIn)} tone="pos" />
-            <Stat label="Money out" value={fmt(totals.moneyOut)} tone="neg" />
-            <Stat label="Net" value={fmt(totals.moneyIn - totals.moneyOut)} tone={totals.moneyIn >= totals.moneyOut ? "pos" : "neg"} />
-          </section>
-
-          {totals.byCat.length > 0 && (
-            <section className="mt-6 rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-              <h2 className="mb-3 text-sm font-semibold">Spending by category</h2>
-              <div className="space-y-1.5">
-                {totals.byCat.map(([cat, v]) => (
-                  <div key={cat} className="grid grid-cols-[9rem_1fr_6rem] items-center gap-3 text-sm">
-                    <span className="truncate">{cat}</span>
-                    <div className="h-2 rounded bg-zinc-100 dark:bg-zinc-800">
-                      <div className="h-2 rounded bg-blue-500" style={{ width: `${(v / maxCat) * 100}%` }} />
-                    </div>
-                    <span className="text-right tabular-nums">{fmt(v)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-
-          <section className="mt-6">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search type, description or alt"
-                className="min-w-[12rem] flex-1 basis-56 rounded-lg border border-zinc-300 bg-transparent px-3 py-1.5 text-sm dark:border-zinc-700"
-              />
-              <select
-                value={fileFilter}
-                onChange={(e) => setFileFilter(e.target.value)}
-                className="max-w-[14rem] rounded-lg border border-zinc-300 bg-transparent px-2 py-1.5 text-sm dark:border-zinc-700"
-              >
-                <option value="all">All files</option>
-                {files.map((f) => (
-                  <option key={f.id} value={f.file.name}>
-                    {f.file.name}
-                  </option>
-                ))}
-              </select>
-              <label className="flex items-center gap-1.5 text-sm">
-                <input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} />
-                Flagged only ({flaggedCount})
-              </label>
-              <label className="flex items-center gap-1.5 text-sm">
-                <input type="checkbox" checked={missingAltOnly} onChange={(e) => setMissingAltOnly(e.target.checked)} />
-                Missing alt ({unmatchedCount})
-              </label>
-              <button onClick={exportXlsx} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900">
-                Export Excel
-              </button>
-              <button onClick={exportCsv} className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium dark:border-zinc-700">
-                Export CSV
-              </button>
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900">
-                  <tr>
-                    <th className="px-3 py-2">Date</th>
-                    <th className="px-3 py-2">Type</th>
-                    <th className="px-3 py-2">Description</th>
-                    <th className="px-3 py-2">Alt Description</th>
-                    <th className="px-3 py-2 text-right">Credit</th>
-                    <th className="px-3 py-2 text-right">Debit</th>
-                    <th className="px-3 py-2 text-right">Balance</th>
-                    <th className="px-3 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((t) => (
-                    <tr
-                      key={t.id}
-                      className={`border-t border-zinc-100 dark:border-zinc-800 ${t.flags.length ? "bg-amber-50 dark:bg-amber-950/30" : ""}`}
-                    >
-                      <td className="whitespace-nowrap px-3 py-1.5 tabular-nums">{formatDate(t.date)}</td>
-                      <td className="whitespace-nowrap px-3 py-1.5">{t.type}</td>
-                      <td className="px-3 py-1.5">
-                        <div>{t.description}</div>
-                        {t.flags.map((fl) => (
-                          <div key={fl} className="text-xs text-amber-700 dark:text-amber-400">
-                            ⚠ {fl}
-                          </div>
-                        ))}
-                        <div className="text-xs text-zinc-400">{t.sourceFile}</div>
-                      </td>
-                      <td className="px-3 py-1.5">
-                        {t.altDescription || (
-                          <button
-                            onClick={() => addRuleFrom(t.description)}
-                            title="Add a rule pre-filled with this description"
-                            className="text-xs text-zinc-400 hover:text-blue-600"
-                          >
-                            + rule
-                          </button>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-green-700 dark:text-green-400">
-                        {t.amount > 0 ? fmt(t.amount) : ""}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-red-600 dark:text-red-400">
-                        {t.amount < 0 ? fmt(-t.amount) : ""}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums text-zinc-500">{t.balance != null ? fmt(t.balance) : ""}</td>
-                      <td className="px-2 py-1.5 text-right">
-                        <button
-                          title="Remove row"
-                          onClick={() => setEdits((ed) => ({ ...ed, [t.id]: { ...ed[t.id], deleted: true } }))}
-                          className="text-zinc-400 hover:text-red-600"
-                        >
-                          ✕
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
     </div>
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" }) {
-  const color = tone === "pos" ? "text-green-700 dark:text-green-400" : tone === "neg" ? "text-red-600 dark:text-red-400" : "";
+function Welcome({ onBrowse, onRules, ruleCount }: { onBrowse: () => void; onRules: () => void; ruleCount: number }) {
+  const steps = [
+    { icon: <Upload className="size-4" />, title: "Drop statements", body: "PDF (downloaded or scanned) or CSV, from any bank. Several at once is fine." },
+    { icon: <CircleCheck className="size-4" />, title: "Review", body: "Every row is checked against the running balance. Anything odd is flagged." },
+    { icon: <Download className="size-4" />, title: "Export", body: "Excel or CSV with Date, Type, Description, your labels, Credit, Debit, Balance." },
+  ];
   return (
-    <div className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className={`mt-1 text-lg font-semibold tabular-nums ${color}`}>{value}</div>
-    </div>
-  );
-}
-
-function FileCard({
-  entry,
-  onRemove,
-  onToggleMapping,
-  onApplyMapping,
-}: {
-  entry: FileEntry;
-  onRemove: () => void;
-  onToggleMapping: () => void;
-  onApplyMapping: (roles: ColumnRole[]) => void;
-}) {
-  const r = entry.result;
-  const isCsv = r?.source === "csv";
-  const [roles, setRoles] = useState<ColumnRole[] | null>(null);
-  const current = roles ?? r?.columns.map((c) => c.role) ?? [];
-  const sourceLabel = { csv: "CSV", "pdf-text": "PDF text", "pdf-ocr": "PDF + OCR" };
-  const balanceOk = r && r.balanceCheck.checked > 0 && r.balanceCheck.mismatches === 0;
-
-  return (
-    <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-medium">{entry.file.name}</span>
-        {entry.status === "processing" && <span className="text-xs text-blue-600">{entry.progress ?? "Processing…"}</span>}
-        {entry.status === "error" && <span className="text-xs text-red-600">{entry.error}</span>}
-        {r && (
-          <>
-            <Badge>{r.bank}</Badge>
-            <Badge>{sourceLabel[r.source]}</Badge>
-            <Badge>{r.transactions.length} transactions</Badge>
-            {r.balanceCheck.checked > 0 && (
-              <Badge tone={balanceOk ? "ok" : "warn"}>
-                {balanceOk ? "✓ Balances reconcile" : `${r.balanceCheck.mismatches} balance mismatch(es)`}
-              </Badge>
-            )}
-          </>
-        )}
-        <div className="ml-auto flex gap-3 text-xs">
-          {isCsv && (
-            <button onClick={onToggleMapping} className="text-blue-600 hover:underline">
-              {entry.showMapping ? "Hide columns" : "Column mapping"}
-            </button>
-          )}
-          <button onClick={onRemove} className="text-zinc-500 hover:text-red-600">
-            Remove
-          </button>
-        </div>
+    <div className="mx-auto max-w-3xl py-6 sm:py-12">
+      <div className="text-center">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Turn bank statements into one clean table</h1>
+        <p className="mx-auto mt-3 max-w-xl text-muted">
+          Read statements from any bank, check every balance, and label transactions your way. Nothing is uploaded — it all runs on this computer.
+        </p>
       </div>
 
-      {r && r.warnings.length > 0 && (
-        <ul className="mt-2 space-y-0.5 text-xs text-amber-700 dark:text-amber-400">
-          {r.warnings.map((w) => (
-            <li key={w}>⚠ {w}</li>
-          ))}
-        </ul>
-      )}
+      <button
+        onClick={onBrowse}
+        className="group mt-8 flex w-full flex-col items-center rounded-2xl border-2 border-dashed border-line bg-surface px-6 py-14 text-center shadow-sm transition-colors hover:border-accent hover:bg-accent-soft/40"
+      >
+        <span className="flex size-12 items-center justify-center rounded-xl bg-accent-soft text-accent transition-transform group-hover:-translate-y-0.5">
+          <Upload className="size-5" />
+        </span>
+        <span className="mt-4 text-lg font-semibold">Drop statements anywhere on this page</span>
+        <span className="mt-1 text-sm text-muted">
+          or <span className="font-medium text-accent underline-offset-2 group-hover:underline">browse your files</span> · PDF and CSV
+        </span>
+      </button>
 
-      {isCsv && entry.showMapping && r && (
-        <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
-          <div className="flex flex-wrap gap-2">
-            {r.columns.map((c, i) => (
-              <label key={i} className="flex flex-col gap-1 text-xs">
-                <span className="max-w-[9rem] truncate text-zinc-500" title={c.header}>
-                  {c.header}
-                </span>
-                <select
-                  value={current[i]}
-                  onChange={(e) => setRoles(current.map((x, j) => (j === i ? (e.target.value as ColumnRole) : x)))}
-                  className="rounded border border-zinc-300 bg-transparent px-1.5 py-1 dark:border-zinc-700"
-                >
-                  {ROLES.map((role) => (
-                    <option key={role}>{role}</option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
-          <button
-            onClick={() => onApplyMapping(current)}
-            className="mt-3 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white"
-          >
-            Re-parse with these columns
-          </button>
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <Card key={s.title} className="p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <span className="flex size-6 items-center justify-center rounded-md bg-zinc-100 text-xs text-muted dark:bg-zinc-800">{i + 1}</span>
+              {s.title}
+            </div>
+            <p className="mt-2 text-sm text-muted">{s.body}</p>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mt-3 flex flex-wrap items-center gap-3 p-4">
+        <div className="flex size-9 items-center justify-center rounded-lg bg-accent-soft text-accent">
+          <Tags className="size-4" />
         </div>
-      )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">Alt description rules</p>
+          <p className="text-sm text-muted">
+            {ruleCount ? `${ruleCount} rule${ruleCount === 1 ? "" : "s"} ready to apply.` : "Set up your own labels before you upload, e.g. tesco → Food - Supermarket."}
+          </p>
+        </div>
+        <Button onClick={onRules}>{ruleCount ? "Edit rules" : "Set up rules"}</Button>
+      </Card>
     </div>
   );
 }
 
-function Badge({ children, tone }: { children: React.ReactNode; tone?: "ok" | "warn" }) {
-  const cls =
-    tone === "ok"
-      ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
-      : tone === "warn"
-        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-        : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
-  return <span className={`rounded-full px-2 py-0.5 text-xs ${cls}`}>{children}</span>;
+function Stat({ label, value, hint, tone, icon }: { label: string; value: string; hint?: string; tone?: "green" | "red" | "amber"; icon?: ReactNode }) {
+  return (
+    <Card className={cx("h-full p-3.5", tone === "amber" && "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30")}>
+      <div className="flex items-center justify-between text-xs font-medium text-muted">
+        {label}
+        {icon && <span className={tone === "amber" ? "text-amber-600" : "text-emerald-600"}>{icon}</span>}
+      </div>
+      <div
+        className={cx(
+          "mt-1 text-xl font-semibold tracking-tight tabular-nums lg:text-2xl",
+          tone === "green" && "text-emerald-700 dark:text-emerald-400",
+          tone === "red" && "text-red-600 dark:text-red-400",
+          tone === "amber" && "text-amber-700 dark:text-amber-300",
+        )}
+      >
+        {value}
+      </div>
+      {hint && <div className="mt-0.5 truncate text-xs text-muted">{hint}</div>}
+    </Card>
+  );
+}
+
+function Count({ n, tone }: { n: number; tone?: "amber" }) {
+  return (
+    <span className={cx("rounded px-1 text-xs tabular-nums", tone === "amber" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200" : "text-muted")}>{n}</span>
+  );
+}
+
+/** Files dropped anywhere on the page are added; also stops the browser opening a dropped file itself. */
+function useFileDrop(onFiles: (files: File[]) => void) {
+  const [dragging, setDragging] = useState(false);
+  const handler = useRef(onFiles);
+  useEffect(() => {
+    handler.current = onFiles;
+  });
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
+    };
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      handler.current([...(e.dataTransfer?.files ?? [])]);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
+  return dragging;
 }

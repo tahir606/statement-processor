@@ -15,22 +15,24 @@ The column is for your own internal analysis:
 You can set up rules before uploading any statement. They apply to every statement you load afterwards.
 
 1. Start the app (`npm run dev`) and open http://localhost:3000.
-2. Click **Alt description rules**, just below the drop zone, to open the panel.
-3. Click **+ Add rule**.
-4. In **Word or pattern**, type a word from the description, e.g. `tesco`.
-5. In **Alt description**, type your label, e.g. `Food - Supermarket`.
+2. Click **Rules** in the top bar (or **Set up rules** on the start screen) to open the rules drawer.
+3. Click **Add your first rule** (or **Add rule**).
+4. In the left box, type a word from the description, e.g. `tesco`.
+5. In the right box, type your label, e.g. `Food - Supermarket`.
 6. Drop in a statement. Matching rows show your label in the **Alt Description** column, and each rule shows how many transactions it matched.
 
 There is no Save button. Every change is saved automatically (see [Where rules are saved](#where-rules-are-saved)).
 
 ## How matching works
 
+Click the `.*` button inside a rule's pattern box to switch it between plain text and a regular expression.
+
 Each transaction gets the label of the **first** rule, from the top, that matches its description. Rules check the Description column only, and matching always ignores upper and lower case.
 
-| Rule type | Regex box | Matches when… | Example pattern | Matches | Doesn't match |
+| Rule type | `.*` toggle | Matches when… | Example pattern | Matches | Doesn't match |
 | --- | --- | --- | --- | --- | --- |
-| Word | Unticked | the text appears anywhere in the description | `tesco` | `Card payment TESCO STORES` | `TSC Ltd` |
-| Regular expression | Ticked | the pattern matches | `^ATM\b` | `ATM cash withdrawal` | `Cash at ATM` (not at the start) |
+| Word | `.*` off | the text appears anywhere in the description | `tesco` | `Card payment TESCO STORES` | `TSC Ltd` |
+| Regular expression | `.*` on | the pattern matches | `^ATM\b` | `ATM cash withdrawal` | `Cash at ATM` (not at the start) |
 
 When working out a label, the app:
 
@@ -57,13 +59,13 @@ A rule with an invalid regular expression shows a red error under it and is skip
 ## Covering every transaction
 
 - **Matches:** each rule shows how many transactions it matched. A rule with 0 matches may be misspelled, or a rule above it may be catching those transactions first.
-- **Missing alt:** tick this above the table to show only transactions with no Alt Description yet.
-- **+ rule:** click this in an empty Alt Description cell to add a rule pre-filled with that transaction's description. Shorten it to the part that identifies the merchant (e.g. `Card payment UBER *TRIP` → `uber`) and add your label.
+- **No label:** this tab above the table shows only transactions with no Alt Description yet.
+- **Add rule:** hover over a row with no label and click **Add rule** in its Alt Description cell to add a rule pre-filled with that transaction's description. Shorten it to the part that identifies the merchant (e.g. `Card payment UBER *TRIP` → `uber`) and add your label.
 - **Search:** the search box also searches Alt Descriptions, e.g. type `Food` to see every food transaction.
 
 ## Where rules are saved
 
-Rules are saved permanently to `data/alt-rules.json` in the project folder, on the computer running the app. The panel shows the exact location.
+Rules are saved permanently to `data/alt-rules.json` in the project folder, on the computer running the app. The footer of the rules drawer shows the exact location.
 
 - **Survives:** clearing browser data, private windows, switching browsers and restarting the app.
 - **Private:** `data/` is in `.gitignore`, so your rules are never committed or pushed to the repository.
@@ -73,7 +75,7 @@ Rules are saved permanently to `data/alt-rules.json` in the project folder, on t
   ALT_RULES_FILE=~/Documents/alt-rules.json npm run dev
   ```
 
-- **Static deploys:** if the app runs without its server (a static export), rules are saved in the browser instead, and the panel shows a warning. Use Export JSON to keep a backup in that case.
+- **Static deploys:** if the app runs without its server (a static export), rules are saved in the browser instead, and the rules drawer shows a warning. Use Export JSON to keep a backup in that case.
 
 ## Backing up and sharing rules
 
@@ -100,6 +102,19 @@ Excel and CSV exports include the column in this position:
 
 `Date, Type, Description, Alt Description, Credit, Debit, Balance`
 
+### Replacing the description in exports
+
+Open **Export** and tick **Use alt description as description** to put the Alt Description in the **Description** column of the exported file, wherever a rule matched. Rows with no Alt Description keep their original description.
+
+| Option | Description column | Alt Description column |
+| --- | --- | --- |
+| Unticked (default) | `Card payment TESCO STORES 3021` | `Food - Supermarket` |
+| Ticked | `Food - Supermarket` | `Food - Supermarket` |
+
+- It only changes exported files. The table on screen always shows the original description.
+- The column layout stays the same, so the Alt Description column still shows which rows were replaced.
+- The app remembers the choice in this browser.
+
 For analysis, open the Excel export and insert a pivot table with **Alt Description** as rows and **Debit** (or **Credit**) as values. That gives you a total per label across all the statements you loaded.
 
 ## Troubleshooting
@@ -107,7 +122,7 @@ For analysis, open the Excel export and insert a pivot table with **Alt Descript
 | Problem | Fix |
 | --- | --- |
 | A rule doesn't match | Check the spelling against the Description column. Word rules match text inside the description, so `tesco` matches but `tesco stores ltd` won't if the bank prints `TESCO STORES 3021`. |
-| The wrong label appears | A rule higher up matches first. Move the rule you want above it with **↑**. |
-| Red "Invalid regex" error | Fix the pattern, or untick **Regex** to match it as plain text. Common causes: an unclosed `(` or `[`. |
+| The wrong label appears | A rule higher up matches first. Move the rule you want above it with the up arrow. |
+| Red "Invalid regex" error | Fix the pattern, or switch `.*` off to match it as plain text. Common causes: an unclosed `(` or `[`. |
 | "Browser-only storage" warning | The app's server isn't reachable, so rules are kept in the browser only. Run the app with `npm run dev` or `npm start`, or export a JSON backup. |
 | Rules are missing on another computer | Rules live in a file on each computer. Export JSON on one and import it on the other, or point both at a shared folder with `ALT_RULES_FILE`. |

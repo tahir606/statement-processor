@@ -55,13 +55,14 @@ Then, for every file:
 
 Full guide: [docs/alt-description-rules.md](docs/alt-description-rules.md).
 
-Use the **Alt description rules** panel (available before you upload anything) to label transactions your own way, e.g. `tesco` → `Food - Supermarket`. The label appears in the **Alt Description** column and in exports.
+Open **Rules** in the top bar (available before you upload anything) to label transactions your own way, e.g. `tesco` → `Food - Supermarket`. The label appears in the **Alt Description** column and in exports.
 
-- A rule is a word (case-insensitive "contains") or, with **Regex** ticked, a regular expression (also case-insensitive), matched against the description.
+- A rule is a word (case-insensitive "contains") or, with the `.*` toggle on, a regular expression (also case-insensitive), matched against the description.
 - Rules are checked top to bottom, and the first match wins. Use ↑/↓ to reorder them.
-- Unmatched rows are left blank. Use **Missing alt** to list them, and click **+ rule** on a row to start a rule from its description.
+- In the **Export** menu, tick **Use alt description as description** to put the Alt Description in the Description column of exported files, where one exists.
+- Unmatched rows are left blank. Use the **No label** tab to list them, and click **Add rule** on a row to start a rule from its description.
 - **Rules are saved permanently** to `data/alt-rules.json` on the computer running the app. Every edit saves automatically, and clearing your browser data doesn't affect them. To keep them somewhere else (e.g. a synced folder), set `ALT_RULES_FILE=/path/to/rules.json` before `npm run dev`. `data/` is gitignored, so your rules never end up in a commit.
-- If the app is deployed without its server (a static export), rules fall back to browser storage and the panel says so.
+- If the app is deployed without its server (a static export), rules fall back to browser storage and the rules drawer says so.
 - Use **Export JSON** / **Import JSON** to back up rules or move them to another machine. Importing adds to your existing rules and skips duplicates.
 
 ```json

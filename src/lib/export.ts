@@ -3,14 +3,21 @@ import type { Transaction } from "./types";
 
 export const EXPORT_COLUMNS = ["Date", "Type", "Description", "Alt Description", "Credit", "Debit", "Balance"] as const;
 
+export interface ExportOptions {
+  /** Put the Alt Description in the Description column where a rule matched; other rows keep their description. */
+  useAltDescription?: boolean;
+}
+
+const descriptionFor = (t: Transaction, opts: ExportOptions) => (opts.useAltDescription && t.altDescription) || t.description;
+
 const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 /** Credit and Debit are positive numbers in separate columns; the other is left blank. */
-export function toRow(t: Transaction): string[] {
+export function toRow(t: Transaction, opts: ExportOptions = {}): string[] {
   return [
     formatDate(t.date),
     t.type,
-    t.description,
+    descriptionFor(t, opts),
     t.altDescription,
     t.amount > 0 ? t.amount.toFixed(2) : "",
     t.amount < 0 ? (-t.amount).toFixed(2) : "",
@@ -18,15 +25,15 @@ export function toRow(t: Transaction): string[] {
   ];
 }
 
-export function toCsv(txns: Transaction[]): string {
-  return [EXPORT_COLUMNS.join(","), ...txns.map((t) => toRow(t).map(escape).join(","))].join("\n");
+export function toCsv(txns: Transaction[], opts: ExportOptions = {}): string {
+  return [EXPORT_COLUMNS.join(","), ...txns.map((t) => toRow(t, opts).map(escape).join(","))].join("\n");
 }
 
 /**
  * Excel export. Unlike CSV, the dates are real date cells with a dd-mmm-yy format,
  * so spreadsheet apps keep the format instead of re-interpreting the text.
  */
-export async function toXlsx(txns: Transaction[]): Promise<Blob> {
+export async function toXlsx(txns: Transaction[], opts: ExportOptions = {}): Promise<Blob> {
   const { Workbook } = await import("exceljs");
   const wb = new Workbook();
   const ws = wb.addWorksheet("Transactions");
@@ -46,7 +53,7 @@ export async function toXlsx(txns: Transaction[]): Promise<Blob> {
     ws.addRow({
       date: new Date(Date.UTC(y, m - 1, d)),
       type: t.type,
-      description: t.description,
+      description: descriptionFor(t, opts),
       altDescription: t.altDescription,
       debit: t.amount < 0 ? -t.amount : null,
       credit: t.amount > 0 ? t.amount : null,
