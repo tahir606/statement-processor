@@ -1,4 +1,5 @@
 import { isUsableHeader, rolesForHeaders } from "../columns";
+import { detectAccountKind, hasCreditMark, pendingForeignAmount, stripConversionNote } from "../card";
 import { finalize, type RawRow } from "../finalize";
 import {
   cleanDescription,
@@ -11,7 +12,7 @@ import {
   parseDate,
 } from "../normalize";
 import { CLOSING_BALANCE, COMMON_SKIP_LINES, detectProfile, OPENING_BALANCE, type BankProfile } from "../profiles";
-import type { ColumnRole, ParseResult, PositionedWord } from "../types";
+import type { AccountKind, ColumnRole, ParseResult, PositionedWord } from "../types";
 
 /** Rows with any OCR word below this confidence get flagged for review. */
 const LOW_CONFIDENCE = 70;
@@ -77,7 +78,9 @@ export function groupLines(words: PositionedWord[]): Line[] {
       const gap = prev ? w.x - prev.right : Infinity;
       // Keep separate when both sides are values (adjacent number columns can sit close together).
       const bothValues = prev && (looksLikeMoney(prev.text) || isDateLike(prev.text)) && looksLikeMoney(w.text);
-      if (prev && gap < Math.max(1.5, 0.8 * l.height) && !bothValues) {
+      // Text-layer items are separated by a word space at most; OCR boxes are shorter and need more room.
+      const maxGap = w.confidence != null ? 0.8 * l.height : 0.45 * l.height;
+      if (prev && gap < Math.max(1.5, maxGap) && !bothValues) {
         // OCR words are always whole words; text-layer fragments may be pieces of one word.
         const space = w.confidence != null || gap > 0.15 * l.height;
         prev.text += (space ? " " : "") + w.text;
@@ -117,7 +120,61 @@ function headerColumns(line: Line, profile: BankProfile): Column[] | null {
     cols[i].left = left;
     cols[i].right = right;
   }
+  // A description header is often centred over left-aligned text, so its column owns the whole gap around it.
+  for (let i = 0; i < cols.length; i++) {
+    if (cols[i].role !== "description") continue;
+    if (cols[i - 1]) cols[i - 1].right = cols[i].left = line.cells[i - 1].right;
+    if (cols[i + 1]) cols[i + 1].left = cols[i].right = line.cells[i + 1].x;
+  }
   return cols;
+}
+
+const hasDatedStart = (l: Line) => isDateLike(l.cells[0]?.text ?? "");
+const hasDigit = (l: Line) => /\d/.test(l.text);
+const isNear = (a: Line, b: Line) => a.page === b.page && b.y - a.y <= 1.3 * Math.max(a.height, b.height);
+
+/** Headers can span several staggered lines ("Transaction Amount" / "(PKR)"). Fold such a band into one line, column by column. */
+function foldHeaderBands(lines: Line[], profile: BankProfile): Line[] {
+  const out: Line[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    let end = i;
+    if (!hasDigit(lines[i])) while (end + 1 < lines.length && !hasDigit(lines[end + 1]) && isNear(lines[end], lines[end + 1])) end++;
+    if (end === i) {
+      out.push(lines[i]);
+      continue;
+    }
+    const cells: Cell[] = [];
+    for (const c of lines.slice(i, end + 1).flatMap((l) => l.cells)) {
+      const same = cells.find((o) => c.x < o.right && o.x < c.right);
+      if (same) {
+        same.text += ` ${c.text}`;
+        same.x = Math.min(same.x, c.x);
+        same.right = Math.max(same.right, c.right);
+      } else cells.push({ ...c });
+    }
+    cells.sort((a, b) => a.x - b.x);
+    const folded: Line = { ...lines[i], y: lines[end].y, cells, text: cells.map((c) => c.text).join(" ") };
+    if (headerColumns(folded, profile)) {
+      out.push(folded);
+      i = end;
+    } else out.push(lines[i]);
+  }
+  return out;
+}
+
+/** Summary boxes often stack the value under its label. Pair them by column: "Credit Limit 1,000.00". */
+function stackedSummary(lines: Line[]): string {
+  const pairs: string[] = [];
+  lines.forEach((line, i) => {
+    const below = lines[i + 1];
+    if (!below || !isNear(line, below)) return;
+    for (const label of line.cells) {
+      if (/\d/.test(label.text)) continue;
+      const value = below.cells.find((c) => c.x < label.right && label.x < c.right && looksLikeMoney(c.text));
+      if (value) pairs.push(`${label.text} ${value.text}`);
+    }
+  });
+  return pairs.join("\n");
 }
 
 function columnFor(cell: Cell, cols: Column[]): Column {
@@ -134,6 +191,8 @@ function columnFor(cell: Cell, cols: Column[]): Column {
 }
 
 interface Draft {
+  creditMarked: boolean;
+  pendingForeign: string | null;
   rawDate: string;
   type: string;
   description: string[];
@@ -150,16 +209,22 @@ interface Draft {
 export interface LayoutOptions {
   fileName: string;
   source: "pdf-text" | "pdf-ocr";
+  /** The user's choice of bank account or credit card; otherwise detected. */
+  accountKind?: AccountKind;
   profiles?: BankProfile[];
 }
 
 export function parseStatementLayout(words: PositionedWord[], opts: LayoutOptions): ParseResult {
-  const lines = groupLines(words);
-  const fullText = lines.map((l) => l.text).join("\n");
+  const grouped = groupLines(words);
+  const lines = foldHeaderBands(grouped, detectProfile(grouped.filter((l) => l.page === grouped[0]?.page).map((l) => l.text).join("\n"), opts.profiles));
+  const summaryPairs = stackedSummary(grouped);
+  // Stacked pairs first: they're matched by column, so they beat reading the raw line.
+  const fullText = `${summaryPairs}\n${lines.map((l) => l.text).join("\n")}`;
   const firstPageText = lines.filter((l) => l.page === lines[0]?.page).map((l) => l.text).join("\n");
   const profile = detectProfile(firstPageText, opts.profiles);
   const skip = [...COMMON_SKIP_LINES, ...(profile.skipLines ?? [])];
   const warnings: string[] = [];
+  const accountKind = opts.accountKind ?? detectAccountKind(firstPageText, opts.fileName);
 
   let cols: Column[] | null = null;
   let firstHeader: Column[] | null = null;
@@ -168,6 +233,8 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
   let opening: number | null = null;
   let closing: number | null = null;
 
+  // A description printed just above its row's date line, waiting for that row.
+  let heldDescription: string[] = [];
   const flush = () => {
     if (current && (current.amount != null || current.debit != null || current.credit != null)) drafts.push(current);
     current = null;
@@ -229,10 +296,16 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
 
     const near = (d: Draft | null) => d && d.page === line.page && line.y - d.bottom < 2.2 * Math.max(line.height, d.lineHeight);
 
+    // Every card transaction has its own date; an undated amount is a summary line ("Interest this period 12.00").
+    const pendingAmount = current && current.amount == null && current.debit == null && current.credit == null;
+    if (accountKind === "card" && !hasDate && hasMoney && !pendingAmount) continue;
+
     if (hasDate || (hasMoney && drafts.length + (current ? 1 : 0) > 0)) {
       // Amount line belonging to a dated row that had none yet.
       if (!hasDate && current && near(current) && current.amount == null && current.debit == null && current.credit == null) {
         Object.assign(current, pick(money));
+        current.creditMarked = hasCreditMark(get("amount"));
+        current.pendingForeign = pendingForeignAmount(get("foreign"), get("amount"));
         if (desc) current.description.push(desc);
         current.type ||= get("type");
         current.minConfidence = Math.min(current.minConfidence, lineConfidence);
@@ -243,18 +316,26 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
       const prevDate: string = hasDate ? rawDate : (drafts[drafts.length - 1]?.rawDate ?? "");
       current = {
         rawDate: prevDate,
+        creditMarked: hasCreditMark(get("amount")),
+        pendingForeign: pendingForeignAmount(get("foreign"), get("amount")),
         type: get("type"),
-        description: desc ? [desc] : [],
+        description: [...heldDescription, ...(desc ? [desc] : [])],
         ...money,
         page: line.page,
         bottom: line.y,
         lineHeight: line.height,
         minConfidence: lineConfidence,
       };
+      heldDescription = [];
       continue;
     }
-    // Wrapped description text.
+    // Wrapped description text, unless it sits closer to the dated line below than to the row above.
     const last: Draft | null = current ?? drafts[drafts.length - 1] ?? null;
+    const nextLine = lines[index + 1];
+    if (desc && !hasMoney && nextLine && isNear(line, nextLine) && hasDatedStart(nextLine) && (!last || last.page !== line.page || nextLine.y - line.y < line.y - last.bottom)) {
+      heldDescription.push(desc);
+      continue;
+    }
     if (!hasMoney && last && near(last) && (desc || money.balance != null)) {
       if (desc) last.description.push(desc);
       if (money.balance != null && last.balance == null) last.balance = money.balance;
@@ -266,7 +347,7 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
 
   if (!firstHeader) {
     warnings.push("No table header found — used the fallback line parser (date at start, amounts at end). Check signs and amounts.");
-    return fallbackParse(lines, opts, profile, warnings, fullText);
+    return fallbackParse(lines, { ...opts, accountKind }, profile, warnings, fullText);
   }
 
   const dateOrder = profile.dateOrder ?? detectDateOrder(drafts.map((d) => d.rawDate));
@@ -288,12 +369,21 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
       amount = d.amount ?? 0;
       if (amount < 0) sawNegative = true;
     }
-    rows.push({ date, type: d.type, description: cleanDescription(d.description.join(" ")), amount, balance: d.balance, flags: lowConfidenceFlag(d.minConfidence) });
+    rows.push({
+      date,
+      type: d.type,
+      description: cleanDescription(stripConversionNote(d.description.join(" "))),
+      amount: d.pendingForeign ? 0 : amount,
+      balance: d.balance,
+      flags: lowConfidenceFlag(d.minConfidence),
+      creditMarked: d.creditMarked,
+      pendingForeign: d.pendingForeign ?? undefined,
+    });
     yearless.push(!dateHasYear(d.rawDate));
   }
   fixYearRollover(rows, yearless, fullText);
 
-  if (!sawNegative && profile.positiveIsDebit) for (const r of rows) r.amount = -Math.abs(r.amount);
+  if (!sawNegative && profile.positiveIsDebit && accountKind !== "card") for (const r of rows) r.amount = -Math.abs(r.amount);
   if (opening == null) opening = findSummaryValue(fullText, OPENING_BALANCE);
 
   return finalize({
@@ -302,6 +392,10 @@ export function parseStatementLayout(words: PositionedWord[], opts: LayoutOption
     bank: profile.name,
     rows,
     amountsSigned: sawNegative || !!profile.positiveIsDebit,
+    directionKnown: hasSplit,
+    accountKind,
+    statementText: fullText,
+    rawDates: drafts.map((d) => d.rawDate),
     openingBalance: opening,
     closingBalance: closing ?? findSummaryValue(fullText, CLOSING_BALANCE),
     warnings,
@@ -319,9 +413,12 @@ function pick(m: { amount: number | null; debit: number | null; credit: number |
 
 function findSummaryValue(text: string, re: RegExp): number | null {
   for (const line of text.split("\n")) {
-    if (!re.test(line)) continue;
-    const m = line.match(/-?[£$€]?\s?\d{1,3}(?:,?\d{3})*\.\d{2}(?:\s?(?:CR|DR))?/gi);
-    if (m) return parseAmount(m[m.length - 1]);
+    const label = line.match(re);
+    if (!label) continue;
+    // The first amount after the label: summary boxes often have a second column on the same line.
+    const rest = line.slice((label.index ?? 0) + label[0].length);
+    const m = rest.match(/-?[£$€]?\s?\d{1,3}(?:,?\d{3})*\.\d{2}(?:\s?(?:CR|DR))?/i);
+    if (m) return parseAmount(m[0]);
   }
   return null;
 }
@@ -398,6 +495,9 @@ function fallbackParse(lines: Line[], opts: LayoutOptions, profile: BankProfile,
     bank: profile.name,
     rows,
     amountsSigned: rows.some((r) => r.amount < 0),
+    accountKind: opts.accountKind,
+    statementText: fullText,
+    rawDates: drafts.map((d) => d.rawDate),
     openingBalance: opening,
     closingBalance: findSummaryValue(fullText, CLOSING_BALANCE),
     warnings,

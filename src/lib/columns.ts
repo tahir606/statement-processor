@@ -17,6 +17,7 @@ export const HEADER_KEYWORDS: [Exclude<ColumnRole, "ignore">, RegExp][] = [
 export function roleForHeader(header: string): ColumnRole {
   const h = header.trim();
   if (!h) return "ignore";
+  if (/\bforeign\b|\bfcy\b|\boriginal (amount|currency)\b/i.test(h)) return "foreign";
   for (const [role, re] of HEADER_KEYWORDS) {
     if (re.test(h)) return role;
   }

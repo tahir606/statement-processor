@@ -60,6 +60,7 @@ export default function TransactionsTable({
                     <div className="mt-0.5 break-all text-xs text-muted">
                       <span className="break-normal lg:hidden">{t.type} · </span>
                       {t.sourceFile}
+                      {t.transfer && <span className="break-normal"> · not counted as spending or income</span>}
                     </div>
                     {t.flags.map((fl) => (
                       <div key={fl} className="mt-1 flex items-start gap-1 text-xs text-amber-800 dark:text-amber-300">

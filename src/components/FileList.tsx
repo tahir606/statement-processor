@@ -1,8 +1,8 @@
 "use client";
 
-import { CircleCheck, Columns3, FileText, LoaderCircle, Sheet, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Columns3, CreditCard, FileText, LoaderCircle, Sheet, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
-import type { ColumnRole, ParseResult } from "@/lib/types";
+import type { AccountKind, ColumnRole, ParseResult } from "@/lib/types";
 import { Button, Card, cx } from "./ui";
 
 export interface FileEntry {
@@ -14,30 +14,34 @@ export interface FileEntry {
   error?: string;
   /** User-chosen column roles (CSV only). */
   roleOverrides?: ColumnRole[];
+  /** The user's correction of the detected account type. */
+  accountKind?: AccountKind;
 }
 
-const ROLES: ColumnRole[] = ["date", "description", "amount", "debit", "credit", "balance", "type", "ignore"];
+const ROLES: ColumnRole[] = ["date", "description", "amount", "debit", "credit", "balance", "type", "foreign", "ignore"];
 const SOURCE_LABEL = { csv: "CSV", "pdf-text": "PDF", "pdf-ocr": "Scanned PDF · OCR" };
 
 export default function FileList({
   files,
   onRemove,
   onApplyMapping,
+  onKindChange,
 }: {
   files: FileEntry[];
+  onKindChange: (entry: FileEntry, kind: AccountKind) => void;
   onRemove: (id: string) => void;
   onApplyMapping: (entry: FileEntry, roles: ColumnRole[]) => void;
 }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
       {files.map((f) => (
-        <FileCard key={f.id} entry={f} onRemove={() => onRemove(f.id)} onApplyMapping={(roles) => onApplyMapping(f, roles)} />
+        <FileCard key={f.id} entry={f} onRemove={() => onRemove(f.id)} onApplyMapping={(roles) => onApplyMapping(f, roles)} onKindChange={(kind) => onKindChange(f, kind)} />
       ))}
     </div>
   );
 }
 
-function FileCard({ entry, onRemove, onApplyMapping }: { entry: FileEntry; onRemove: () => void; onApplyMapping: (roles: ColumnRole[]) => void }) {
+function FileCard({ entry, onRemove, onApplyMapping, onKindChange }: { entry: FileEntry; onRemove: () => void; onApplyMapping: (roles: ColumnRole[]) => void; onKindChange: (kind: AccountKind) => void }) {
   const r = entry.result;
   const isCsv = /\.csv$/i.test(entry.file.name);
   const [showMapping, setShowMapping] = useState(false);
@@ -46,7 +50,9 @@ function FileCard({ entry, onRemove, onApplyMapping }: { entry: FileEntry; onRem
   const current = roles ?? r?.columns.map((c) => c.role) ?? [];
   const checked = r?.balanceCheck.checked ?? 0;
   const mismatches = r?.balanceCheck.mismatches ?? 0;
-  const Icon = isCsv ? Sheet : FileText;
+  const Icon = r?.accountKind === "card" ? CreditCard : isCsv ? Sheet : FileText;
+  const totalsMatch = r?.balanceCheck.totalsMatch ?? null;
+  const balanced = mismatches === 0 && (checked > 0 || totalsMatch === true) && totalsMatch !== false;
 
   return (
     <Card className={cx("px-3 py-2.5", showMapping && "sm:col-span-2 xl:col-span-3 2xl:col-span-4")}>
@@ -71,14 +77,14 @@ function FileCard({ entry, onRemove, onApplyMapping }: { entry: FileEntry; onRem
                 <span className="truncate" title={`${r.bank} · ${SOURCE_LABEL[r.source]}`}>
                   {r.transactions.length} rows · {r.bank}
                 </span>
-                {checked > 0 &&
-                  (mismatches === 0 ? (
+                {(checked > 0 || totalsMatch != null) &&
+                  (balanced ? (
                     <span className="flex shrink-0 items-center gap-0.5 text-emerald-700 dark:text-emerald-400" title="Every row matches the running balance">
                       <CircleCheck className="size-3" /> Balanced
                     </span>
                   ) : (
                     <span className="flex shrink-0 items-center gap-0.5 text-amber-700 dark:text-amber-300">
-                      <TriangleAlert className="size-3" /> {mismatches} mismatch{mismatches === 1 ? "" : "es"}
+                      <TriangleAlert className="size-3" /> {mismatches ? `${mismatches} mismatch${mismatches === 1 ? "" : "es"}` : "Totals differ"}
                     </span>
                   ))}
               </>
@@ -86,6 +92,18 @@ function FileCard({ entry, onRemove, onApplyMapping }: { entry: FileEntry; onRem
           </div>
         </div>
         <div className="flex shrink-0 items-center">
+          {r && (
+            <select
+              value={r.accountKind}
+              onChange={(e) => onKindChange(e.target.value as AccountKind)}
+              aria-label="Account type"
+              title="Bank account or credit card: card statements are read differently"
+              className="mr-0.5 h-7 rounded-md border border-line bg-surface px-1 text-xs"
+            >
+              <option value="bank">Bank</option>
+              <option value="card">Card</option>
+            </select>
+          )}
           {r && r.warnings.length > 0 && (
             <button
               onClick={() => setShowWarnings((v) => !v)}

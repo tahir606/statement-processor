@@ -2,13 +2,14 @@
 
 import { CircleCheck, Download, Lock, ScanText, Search, Tags, TriangleAlert, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { linkCardPayments, summarize } from "@/lib/analytics";
 import { altDescriptionFor, compileRules, matchRule, newRuleId } from "@/lib/altRules";
 import { parseCsv } from "@/lib/csv";
 import { toCsv, toXlsx } from "@/lib/export";
-import type { ColumnRole, ParseResult, Transaction } from "@/lib/types";
-import Breakdown from "./Breakdown";
+import type { AccountKind, ColumnRole, ParseResult, Transaction } from "@/lib/types";
 import ExportMenu from "./ExportMenu";
 import FileList, { type FileEntry } from "./FileList";
+import Overview from "./Overview";
 import RulesDrawer from "./RulesDrawer";
 import TransactionsTable from "./TransactionsTable";
 import { Button, Card, Segmented, cx, fmt } from "./ui";
@@ -20,11 +21,11 @@ type View = "all" | "review" | "missing";
 async function processFile(entry: FileEntry, onProgress: (msg: string) => void): Promise<ParseResult> {
   const name = entry.file.name;
   if (/\.csv$/i.test(name) || entry.file.type === "text/csv") {
-    return parseCsv(await entry.file.text(), name, { roleOverrides: entry.roleOverrides });
+    return parseCsv(await entry.file.text(), name, { roleOverrides: entry.roleOverrides, accountKind: entry.accountKind });
   }
   if (/\.pdf$/i.test(name) || entry.file.type === "application/pdf") {
     const { parsePdf } = await import("@/lib/pdf");
-    return parsePdf(await entry.file.arrayBuffer(), name, onProgress);
+    return parsePdf(await entry.file.arrayBuffer(), name, onProgress, entry.accountKind);
   }
   throw new Error("Unsupported file type — use PDF or CSV.");
 }
@@ -35,6 +36,7 @@ export default function StatementProcessor() {
   const [query, setQuery] = useState("");
   const [fileFilter, setFileFilter] = useState("all");
   const [view, setView] = useState<View>("all");
+  const [tab, setTab] = useState<"overview" | "transactions">("overview");
   const [useAltInExport, setUseAltInExport] = useExportPreference();
   const { rules, setRules, storage: rulesStorage } = useAltRules();
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -85,7 +87,7 @@ export default function StatementProcessor() {
       else seen.set(key, t.sourceFile);
     }
     for (const [i, t] of out.entries()) out[i] = { ...t, altDescription: altDescriptionFor(t.description, compiled) };
-    return out.sort((a, b) => a.date.localeCompare(b.date));
+    return linkCardPayments(out).sort((a, b) => a.date.localeCompare(b.date));
   }, [files, edits, compiled]);
 
   const matchCounts = useMemo(() => {
@@ -97,7 +99,7 @@ export default function StatementProcessor() {
     return counts;
   }, [allTxns, compiled, rules]);
 
-  const inFile = allTxns.filter((t) => fileFilter === "all" || t.sourceFile === fileFilter);
+  const inFile = useMemo(() => allTxns.filter((t) => fileFilter === "all" || t.sourceFile === fileFilter), [allTxns, fileFilter]);
   const reviewCount = inFile.filter((t) => t.flags.length).length;
   const missingCount = inFile.filter((t) => !t.altDescription).length;
   const q = query.trim().toLowerCase();
@@ -108,8 +110,8 @@ export default function StatementProcessor() {
   );
 
   // Summary cards describe everything loaded (or the chosen statement); the table footer totals the current view.
-  const moneyIn = inFile.reduce((s, t) => s + Math.max(t.amount, 0), 0);
-  const moneyOut = inFile.reduce((s, t) => s + Math.max(-t.amount, 0), 0);
+  const summary = useMemo(() => summarize(inFile), [inFile]);
+  const results = files.flatMap((f) => (f.result && (fileFilter === "all" || f.file.name === fileFilter) ? [f.result] : []));
 
   const openRules = (ruleId?: string) => {
     setFocusRuleId(ruleId);
@@ -164,10 +166,14 @@ export default function StatementProcessor() {
           <div className="space-y-6">
             <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <Stat label="Transactions" value={String(inFile.length)} hint={busy ? "Reading files…" : `from ${files.length} file${files.length === 1 ? "" : "s"}`} />
-              <Stat label="Money in" value={fmt(moneyIn)} tone="green" />
-              <Stat label="Money out" value={fmt(moneyOut)} />
-              <Stat label="Net" value={`${moneyIn - moneyOut < 0 ? "−" : ""}${fmt(Math.abs(moneyIn - moneyOut))}`} tone={moneyIn - moneyOut < 0 ? "red" : "green"} />
-              <button onClick={() => setView(reviewCount ? "review" : "all")} className="col-span-2 text-left md:col-span-1">
+              <Stat label="Money in" value={fmt(summary.income)} tone="green" />
+              <Stat label="Spent" value={fmt(summary.spending)} hint="bank and cards, after refunds" />
+              <Stat label="Left over" value={`${summary.net < 0 ? "−" : ""}${fmt(Math.abs(summary.net))}`} tone={summary.net < 0 ? "red" : "green"} />
+              <button
+                onClick={() => {
+                  setView(reviewCount ? "review" : "all");
+                  setTab("transactions");
+                }} className="col-span-2 text-left md:col-span-1">
                 <Stat
                   label="Needs review"
                   value={String(reviewCount)}
@@ -192,10 +198,42 @@ export default function StatementProcessor() {
                   update(entry.id, { roleOverrides: roles });
                   run(next);
                 }}
+                onKindChange={(entry, kind: AccountKind) => {
+                  update(entry.id, { accountKind: kind });
+                  run({ ...entry, accountKind: kind });
+                }}
               />
             </section>
 
-            <section className="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_320px]">
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Segmented
+                  value={tab}
+                  onChange={setTab}
+                  options={[
+                    { value: "overview", label: "Overview" },
+                    { value: "transactions", label: <>Transactions <Count n={inFile.length} /></> },
+                  ]}
+                />
+                {files.length > 1 && (
+                  <select
+                    value={fileFilter}
+                    onChange={(e) => setFileFilter(e.target.value)}
+                    aria-label="Filter by statement"
+                    className="h-9 max-w-64 rounded-lg border border-line bg-surface px-2.5 text-sm shadow-sm"
+                  >
+                    <option value="all">All statements</option>
+                    {files.map((f) => (
+                      <option key={f.id} value={f.file.name}>
+                        {f.file.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {tab === "overview" ? (
+                <Overview txns={inFile} results={results} />
+              ) : (
               <div className="min-w-0 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="relative min-w-56 flex-1 sm:max-w-sm">
@@ -217,21 +255,6 @@ export default function StatementProcessor() {
                       { value: "missing", label: <>No label <Count n={missingCount} /></> },
                     ]}
                   />
-                  {files.length > 1 && (
-                    <select
-                      value={fileFilter}
-                      onChange={(e) => setFileFilter(e.target.value)}
-                      aria-label="Filter by file"
-                      className="h-9 max-w-56 rounded-lg border border-line bg-surface px-2.5 text-sm shadow-sm"
-                    >
-                      <option value="all">All statements</option>
-                      {files.map((f) => (
-                        <option key={f.id} value={f.file.name}>
-                          {f.file.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                   <div className="ml-auto">
                     <ExportMenu
                       count={visible.length}
@@ -249,9 +272,7 @@ export default function StatementProcessor() {
                   emptyMessage={busy && !allTxns.length ? "Reading statements…" : "No transactions match this view."}
                 />
               </div>
-              <aside className="2xl:sticky 2xl:top-20">
-                <Breakdown rows={visible} />
-              </aside>
+              )}
             </section>
           </div>
         )}
@@ -296,7 +317,7 @@ export default function StatementProcessor() {
 
 function Welcome({ onBrowse, onRules, ruleCount }: { onBrowse: () => void; onRules: () => void; ruleCount: number }) {
   const steps = [
-    { icon: <Upload className="size-4" />, title: "Drop statements", body: "PDF (downloaded or scanned) or CSV, from any bank. Several at once is fine." },
+    { icon: <Upload className="size-4" />, title: "Drop statements", body: "PDF (downloaded or scanned) or CSV, from any bank or credit card. Several at once is fine." },
     { icon: <CircleCheck className="size-4" />, title: "Review", body: "Every row is checked against the running balance. Anything odd is flagged." },
     { icon: <Download className="size-4" />, title: "Export", body: "Excel or CSV with Date, Type, Description, your labels, Credit, Debit, Balance." },
   ];
@@ -305,7 +326,7 @@ function Welcome({ onBrowse, onRules, ruleCount }: { onBrowse: () => void; onRul
       <div className="text-center">
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Turn bank statements into one clean table</h1>
         <p className="mx-auto mt-3 max-w-xl text-muted">
-          Read statements from any bank, check every balance, and label transactions your way. Nothing is uploaded — it all runs on this computer.
+          Read bank and credit card statements, check every balance, see where your money goes, and label transactions your way. Nothing is uploaded — it all runs on this computer.
         </p>
       </div>
 

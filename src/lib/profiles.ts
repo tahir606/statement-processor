@@ -51,7 +51,7 @@ export const COMMON_SKIP_LINES: RegExp[] = [
 ];
 
 export const OPENING_BALANCE = /\b(balance (brought|b\/?)\s?f(or)?w(ar)?d|opening balance|previous balance|balance b\/f|start(ing)? balance)\b/i;
-export const CLOSING_BALANCE = /\b(balance carried (forward|fwd)|closing balance|balance c\/f|end(ing)? balance|new balance)\b/i;
+export const CLOSING_BALANCE = /\b(balance carried (forward|fwd)|closing balance|balance c\/f|end(ing)? balance|new balance|statement balance|current balance)\b/i;
 
 export function detectProfile(text: string, profiles: BankProfile[] = PROFILES): BankProfile {
   return profiles.find((p) => p.detect.some((re) => re.test(text))) ?? GENERIC_PROFILE;

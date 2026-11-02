@@ -9,7 +9,21 @@ export type ColumnRole =
   | "credit"
   | "balance"
   | "type"
+  /** The original amount of a foreign purchase; the account's own currency is in the amount column. */
+  | "foreign"
   | "ignore";
+
+export type AccountKind = "bank" | "card";
+
+/** Figures read from a credit card statement's summary box. */
+export interface CardSummary {
+  statementBalance?: number;
+  minimumPayment?: number;
+  /** ISO yyyy-mm-dd */
+  dueDate?: string;
+  creditLimit?: number;
+  availableCredit?: number;
+}
 
 export interface Transaction {
   id: string;
@@ -24,6 +38,11 @@ export interface Transaction {
   amount: number;
   balance: number | null;
   category: string;
+  accountKind: AccountKind;
+  /** Money moving between the user's own accounts (a card payment): not income, not spending. */
+  transfer: boolean;
+  /** Not posted yet: the statement only gives this foreign amount (e.g. "SGD 3.16"), so it's left out of totals. */
+  pendingForeign?: string;
   sourceFile: string;
   /** Problems found while parsing / reconciling this row. */
   flags: string[];
@@ -36,12 +55,16 @@ export interface BalanceCheck {
   mismatches: number;
   openingBalance: number | null;
   closingBalance: number | null;
+  /** Opening balance plus all transactions equals the closing balance. Null when the statement doesn't show both. */
+  totalsMatch: boolean | null;
 }
 
 export interface ParseResult {
   fileName: string;
   source: "csv" | "pdf-text" | "pdf-ocr";
   bank: string;
+  accountKind: AccountKind;
+  cardSummary?: CardSummary;
   transactions: Transaction[];
   warnings: string[];
   balanceCheck: BalanceCheck;

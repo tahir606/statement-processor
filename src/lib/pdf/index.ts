@@ -1,10 +1,10 @@
-import type { ParseResult } from "../types";
+import type { AccountKind, ParseResult } from "../types";
 import { parseStatementLayout } from "./layout";
 import { ocrPage } from "./ocr";
 import { readTextLayer } from "./textLayer";
 
 /** Browser-only: parse a PDF statement, falling back to OCR for pages with no text layer. */
-export async function parsePdf(data: ArrayBuffer, fileName: string, onProgress?: (msg: string) => void): Promise<ParseResult> {
+export async function parsePdf(data: ArrayBuffer, fileName: string, onProgress?: (msg: string) => void, accountKind?: AccountKind): Promise<ParseResult> {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
   const task = pdfjs.getDocument({ data: new Uint8Array(data) });
@@ -18,6 +18,7 @@ export async function parsePdf(data: ArrayBuffer, fileName: string, onProgress?:
     }
     const result = parseStatementLayout(words, {
       fileName,
+      accountKind,
       source: imagePages.length ? "pdf-ocr" : "pdf-text",
     });
     if (imagePages.length) result.warnings.unshift(`OCR used on ${imagePages.length} scanned page(s) — double-check flagged rows.`);

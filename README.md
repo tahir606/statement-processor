@@ -1,6 +1,6 @@
 # Statement Processor
 
-Turn bank statements (PDF or CSV, from any bank) into one clean transaction table, without uploading them anywhere and without an AI model.
+Turn bank and credit card statements (PDF or CSV, from any bank) into one clean transaction table, without uploading them anywhere and without an AI model.
 
 Everything runs in your browser. Statements are parsed with layout analysis and classic OCR (Tesseract), not an LLM. Each row is then checked against the statement's running balance, so misreads are caught instead of passing through silently.
 
@@ -14,6 +14,10 @@ Everything runs in your browser. Statements are parsed with layout analysis and 
 - **Private by design.** Statements are parsed in your browser and never uploaded. The only thing the app's local server stores is your alt description rules, in a file on your own disk.
 - **Your own labels.** Alt description rules map words or patterns to your own descriptions for internal analysis.
 - **Easy to extend.** Add a bank with a small profile, and edit transaction types and categories as plain rules.
+
+- **Credit cards understood.** Card statements are detected automatically (or set Bank / Card on the file). Each card gets a plain summary: what you owe, the minimum payment and due date, how much of your limit is used, and how the balance was reached.
+- **Nothing counted twice.** Paying your card from your bank isn't counted as spending, because the purchases already are.
+- **Calculations and charts.** Money in, spending, what's left over, monthly and daily averages, interest and fees, money in and spending over time, spending by category or your own labels, top merchants, and bank balance over time.
 
 ## Getting started
 

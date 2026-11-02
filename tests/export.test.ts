@@ -3,7 +3,7 @@ import { toCsv } from "@/lib/export";
 import type { Transaction } from "@/lib/types";
 
 const t = (amount: number, description = "Shop"): Transaction => ({
-  id: "1", date: "2026-09-01", type: "Card Payment", description, altDescription: "", amount, balance: 100, category: "", sourceFile: "a.csv", flags: [],
+  id: "1", date: "2026-09-01", type: "Card Payment", description, altDescription: "", amount, balance: 100, category: "", accountKind: "bank", transfer: false, sourceFile: "a.csv", flags: [],
 });
 
 describe("toCsv", () => {

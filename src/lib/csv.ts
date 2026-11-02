@@ -3,11 +3,14 @@ import { isUsableHeader, rolesForHeaders } from "./columns";
 import { finalize, type RawRow } from "./finalize";
 import { cleanDescription, detectDateOrder, guessStatementYear, isDateLike, looksLikeMoney, parseAmount, parseDate } from "./normalize";
 import { CLOSING_BALANCE, detectProfile, OPENING_BALANCE, type BankProfile } from "./profiles";
-import type { ColumnRole, ParseResult } from "./types";
+import { detectAccountKind, hasCreditMark } from "./card";
+import type { AccountKind, ColumnRole, ParseResult } from "./types";
 
 export interface CsvOptions {
   /** Roles chosen by the user, one per column; replaces auto-detection. */
   roleOverrides?: ColumnRole[];
+  /** The user's choice of bank account or credit card; otherwise detected. */
+  accountKind?: AccountKind;
   profiles?: BankProfile[];
 }
 
@@ -19,6 +22,7 @@ export function parseCsv(text: string, fileName: string, opts: CsvOptions = {}):
   const preamble = rows.slice(0, HEADER_SEARCH_ROWS).map((r) => r.join(" ")).join("\n");
   const profile = detectProfile(preamble, opts.profiles);
   const warnings: string[] = [];
+  const accountKind = opts.accountKind ?? detectAccountKind(preamble, fileName);
 
   // 1. Find the header row (banks often put account details above it).
   let headerIndex = -1;
@@ -65,6 +69,8 @@ export function parseCsv(text: string, fileName: string, opts: CsvOptions = {}):
   let opening: number | null = null;
   let closing: number | null = null;
   let sawNegative = false;
+  let directionKnown = false;
+  const rawDates: string[] = [];
   let skipped = 0;
 
   for (const r of body) {
@@ -98,24 +104,29 @@ export function parseCsv(text: string, fileName: string, opts: CsvOptions = {}):
         amount = Math.abs(credit ?? 0) - Math.abs(debit ?? 0);
       }
       sawNegative = true;
+      directionKnown = true;
     } else {
       amount = parseAmount(r[amountCol]);
       if (amount != null && amount < 0) sawNegative = true;
       const type = (r[typeCol] ?? "").toLowerCase();
       if (amount != null && type) {
-        if (/^(dr|debit|d|withdrawal|payment|purchase)/.test(type)) { amount = -Math.abs(amount); sawNegative = true; }
-        else if (/^(cr|credit|c|deposit)/.test(type)) { amount = Math.abs(amount); sawNegative = true; }
+        // On a card, a "payment" is money coming in; a "sale" is money going out.
+        const out = accountKind === "card" ? /^(dr|debit|sale|purchase|fee|interest)/ : /^(dr|debit|d|withdrawal|payment|purchase)/;
+        const into = accountKind === "card" ? /^(cr|credit|payment|return|refund)/ : /^(cr|credit|c|deposit)/;
+        if (out.test(type)) { amount = -Math.abs(amount); sawNegative = directionKnown = true; }
+        else if (into.test(type)) { amount = Math.abs(amount); sawNegative = directionKnown = true; }
       }
     }
     if (amount == null) {
       skipped++;
       continue;
     }
-    out.push({ date, type: typeCol >= 0 ? r[typeCol] : undefined, description, amount, balance });
+    rawDates.push(rawDate);
+    out.push({ date, type: typeCol >= 0 ? r[typeCol] : undefined, description, amount, balance, creditMarked: amountCol >= 0 && hasCreditMark(r[amountCol] ?? "") });
   }
 
   const amountsSigned = sawNegative;
-  if (!amountsSigned && profile.positiveIsDebit) for (const row of out) row.amount = -Math.abs(row.amount);
+  if (!amountsSigned && profile.positiveIsDebit && accountKind !== "card") for (const row of out) row.amount = -Math.abs(row.amount);
   if (skipped) warnings.push(`Skipped ${skipped} row(s) without a valid date or amount.`);
 
   return finalize({
@@ -124,6 +135,10 @@ export function parseCsv(text: string, fileName: string, opts: CsvOptions = {}):
     bank: profile.name,
     rows: out,
     amountsSigned: amountsSigned || !!profile.positiveIsDebit,
+    directionKnown,
+    accountKind,
+    statementText: preamble,
+    rawDates,
     openingBalance: opening,
     closingBalance: closing,
     warnings,

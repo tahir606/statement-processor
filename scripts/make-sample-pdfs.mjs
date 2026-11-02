@@ -137,7 +137,86 @@ function newestFirst() {
   return buildPdf([items]);
 }
 
+// ---- Sample 3: credit card. Summary box, positive charges, CR on payments and refunds, no running balance.
+function creditCard() {
+  const rows = [
+    ["03 Oct 2026", "04 Oct 2026", "AMAZON MARKETPLACE", 54.99, false],
+    ["05 Oct 2026", "06 Oct 2026", "PAYMENT RECEIVED - THANK YOU", 300.0, true],
+    ["08 Oct 2026", "09 Oct 2026", "SHELL FUEL 2231", 62.1, false],
+    ["11 Oct 2026", "12 Oct 2026", "RESTAURANT LA TABLE", 88.5, false],
+    ["14 Oct 2026", "15 Oct 2026", "AMAZON REFUND", 20.0, true],
+    ["19 Oct 2026", "20 Oct 2026", "TESCO STORES 3021", 41.25, false],
+    ["24 Oct 2026", "24 Oct 2026", "NETFLIX.COM", 10.99, false],
+    ["28 Oct 2026", "28 Oct 2026", "INTEREST CHARGE", 14.32, false],
+    ["28 Oct 2026", "28 Oct 2026", "LATE PAYMENT FEE", 12.0, false],
+  ];
+  const previous = 450.0;
+  const closing = rows.reduce((b, [, , , a, cr]) => Math.round((b + (cr ? -a : a)) * 100) / 100, previous);
+  const items = [
+    { x: 40, y: 50, text: "Northwind Credit Card", size: 16, bold: true },
+    { x: 40, y: 72, text: "Statement date 30 Oct 2026" },
+    { x: 40, y: 100, text: "Previous balance" }, { x: 250, y: 100, text: money(previous), align: "right" },
+    { x: 40, y: 114, text: "New balance" }, { x: 250, y: 114, text: money(closing), align: "right" },
+    { x: 40, y: 128, text: "Minimum payment" }, { x: 250, y: 128, text: "25.00", align: "right" },
+    { x: 330, y: 100, text: "Payment due date" }, { x: 555, y: 100, text: "24 Nov 2026", align: "right" },
+    { x: 330, y: 114, text: "Credit limit" }, { x: 555, y: 114, text: "2,000.00", align: "right" },
+    { x: 330, y: 128, text: "Available credit" }, { x: 555, y: 128, text: money(2000 - closing), align: "right" },
+    { x: 40, y: 170, text: "Trans Date", bold: true },
+    { x: 115, y: 170, text: "Post Date", bold: true },
+    { x: 190, y: 170, text: "Description", bold: true },
+    { x: 555, y: 170, text: "Amount", bold: true, align: "right" },
+  ];
+  rows.forEach(([d, p, desc, a, cr], i) => {
+    const y = 188 + i * 14;
+    items.push({ x: 40, y, text: d }, { x: 115, y, text: p }, { x: 190, y, text: desc }, { x: 555, y, text: `${money(a)}${cr ? " CR" : ""}`, align: "right" });
+  });
+  items.push({ x: 190, y: 188 + rows.length * 14 + 10, text: "Interest this period" }, { x: 555, y: 188 + rows.length * 14 + 10, text: "14.32", align: "right" });
+  return buildPdf([items]);
+}
+
+// ---- Sample 4: staggered multi-line header, centred Description header, foreign and home amount columns,
+// merchant printed above the date line, unposted rows repeating the foreign figure, values stacked under labels.
+function foreignCard() {
+  const items = [
+    { x: 40, y: 40, text: "Sample Bank Credit Card", size: 14, bold: true },
+    { x: 40, y: 80, text: "Total Credit Limit (PKR)" }, { x: 211, y: 80, text: "Available Credit Limit (PKR)" },
+    { x: 40, y: 90, text: "500,000.00" }, { x: 211, y: 90, text: "488,000.00" },
+    { x: 372, y: 130, text: "Transaction Amount" }, { x: 472, y: 130, text: "Transaction Amount" },
+    { x: 20, y: 135, text: "Transaction Date" }, { x: 112, y: 135, text: "Posting Date" }, { x: 263, y: 135, text: "Description" },
+    { x: 380, y: 140, text: "(Foreign Currency)" }, { x: 506, y: 140, text: "(PKR)" },
+    { x: 167, y: 158, text: "SAMPLE VISA Platinum" },
+  ];
+  const row = (y, d, p, desc, amt) => items.push({ x: 20, y, text: d }, { x: 106, y, text: p }, { x: 167, y, text: desc }, { x: 553, y, text: amt, align: "right" });
+  row(176, "21-10-2026", "22-10-2026", "KFC, KARACHI", "PKR 951.00");
+  row(194, "22-10-2026", "23-10-2026", "LONGER FUEL STATION NAME, KARACHI", "PKR 5,300.00");
+  // Foreign purchase: three lines, merchant above, conversion note below.
+  items.push({ x: 167, y: 207, text: "SHOP ONE, SINGAPORE" }, { x: 20, y: 212.2, text: "20-10-2026" }, { x: 106, y: 212.2, text: "23-10-2026" });
+  items.push({ x: 450, y: 212.2, text: "SGD 8.50", align: "right" }, { x: 553, y: 212.2, text: "PKR 1,849.90", align: "right" });
+  items.push({ x: 167, y: 217.4, text: "USD Amount: 6.64 USD Conversion Rate: 278.6" });
+  row(235, "23-10-2026", "23-10-2026", "Foreign Transaction Fee", "PKR 74.00");
+  row(253, "23-10-2026", "23-10-2026", "FED on Foreign Transaction Fee", "PKR 11.10");
+  row(271, "23-10-2026", "23-10-2026", "Advance Tax on Foreign Transaction", "PKR 9.25");
+  row(289, "24-10-2026", "24-10-2026", "Payment Received", "PKR -2,000.00");
+  // Not posted: the PKR column just repeats the foreign figure.
+  items.push({ x: 20, y: 307, text: "25-10-2026" }, { x: 106, y: 307, text: "T00:00:00" }, { x: 167, y: 307, text: "SHOP TWO, SINGAPORE" }, { x: 450, y: 307, text: "SGD 200.00", align: "right" }, { x: 553, y: 307, text: "200.00", align: "right" });
+  items.push({ x: 40, y: 360, text: "Previous Balance (PKR)" }, { x: 399, y: 360, text: "Current Balance (PKR)" });
+  items.push({ x: 40, y: 370, text: "5,805.75" }, { x: 399, y: 370, text: "12,000.00" });
+  return buildPdf([items]);
+}
+
 mkdirSync("samples", { recursive: true });
+writeFileSync("samples/credit-card-foreign.pdf", foreignCard());
+writeFileSync("samples/credit-card-oct-2026.pdf", creditCard());
+writeFileSync(
+  "samples/credit-card-export.csv",
+  [
+    "Transaction Date,Post Date,Description,Amount",
+    "10/02/2026,10/03/2026,SPOTIFY,9.99",
+    "10/05/2026,10/06/2026,ONLINE PAYMENT THANK YOU,-200.00",
+    "10/09/2026,10/10/2026,UBER TRIP,18.40",
+    "10/21/2026,10/22/2026,WHOLE FOODS,75.10",
+  ].join("\n"),
+);
 writeFileSync("samples/example-bank-sep-2026.pdf", exampleBank());
 writeFileSync("samples/globe-savings-newest-first.pdf", newestFirst());
 
