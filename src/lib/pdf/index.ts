@@ -6,7 +6,7 @@ import { readTextLayer } from "./textLayer";
 /** Browser-only: parse a PDF statement, falling back to OCR for pages with no text layer. */
 export async function parsePdf(data: ArrayBuffer, fileName: string, onProgress?: (msg: string) => void, accountKind?: AccountKind): Promise<ParseResult> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  pdfjs.GlobalWorkerOptions.workerSrc = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/pdf.worker.min.mjs`;
   const task = pdfjs.getDocument({ data: new Uint8Array(data) });
   const doc = await task.promise;
   try {

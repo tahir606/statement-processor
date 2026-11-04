@@ -5,10 +5,16 @@ import { rulesFromJson, rulesToJson, type AltRule } from "@/lib/altRules";
 
 const BROWSER_KEY = "statement-processor.alt-rules";
 const SAVE_DELAY_MS = 400;
+/** Set when building the hosted site: there's no server, and one would be shared by every visitor. */
+const HOSTED = process.env.NEXT_PUBLIC_RULES_STORAGE === "browser";
 
 export interface RulesStorage {
-  /** "file": saved to a JSON file by the app's server. "browser": the server isn't available (e.g. a static deploy). */
-  where: "loading" | "file" | "browser";
+  /**
+   * "file": saved to a JSON file by the app's server (running it yourself).
+   * "hosted": the shared website; rules are kept in each visitor's own browser.
+   * "browser": the server should be there but couldn't be reached.
+   */
+  where: "loading" | "file" | "hosted" | "browser";
   file?: string;
   status: "idle" | "saving" | "saved" | "error";
   error?: string;
@@ -45,6 +51,13 @@ export function useAltRules() {
     let cancelled = false;
     (async () => {
       const browserRules = readBrowserCopy();
+      if (HOSTED) {
+        if (cancelled) return;
+        skipNextSave.current = true;
+        setRules(browserRules);
+        setStorage({ where: "hosted", status: "idle" });
+        return;
+      }
       try {
         const res = await fetch("/api/rules", { cache: "no-store" });
         const body = await res.json();

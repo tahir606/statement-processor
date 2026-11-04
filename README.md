@@ -19,6 +19,12 @@ Everything runs in your browser. Statements are parsed with layout analysis and 
 - **Nothing counted twice.** Paying your card from your bank isn't counted as spending, because the purchases already are.
 - **Calculations and charts.** Money in, spending, what's left over, monthly and daily averages, interest and fees, money in and spending over time, spending by category or your own labels, top merchants, and bank balance over time.
 
+## Use it online
+
+**https://tahir606.github.io/statement-processor/**
+
+The hosted version is a static site: statements are read in your browser and never uploaded, and your alt description rules are saved in your browser only (export them as JSON to back up). It redeploys automatically from `main` via `.github/workflows/deploy.yml`.
+
 ## Getting started
 
 Requires Node.js 20 or later.
@@ -30,7 +36,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 and drop in your statements. To try it without real data, use the fake statements in [`samples/`](samples).
+Open http://localhost:3000 and drop in your statements. Running it yourself saves rules to `data/alt-rules.json` instead of the browser. To try it without real data, use the fake statements in [`samples/`](samples).
 
 | Command | Purpose |
 | --- | --- |

@@ -223,6 +223,14 @@ export default function RulesDrawer({ open, onClose, rules, compiled, onChange, 
 
 function StorageStatus({ storage }: { storage: RulesStorage }) {
   if (storage.where === "loading") return <p className="text-xs text-muted">Loading saved rules…</p>;
+  if (storage.where === "hosted") {
+    return (
+      <p className="flex items-start gap-1.5 text-xs text-muted">
+        <HardDrive className="mt-px size-3.5 shrink-0" />
+        Saved in this browser only — nobody else can see your rules. Clearing browser data removes them, so use Export JSON to keep a backup.
+      </p>
+    );
+  }
   if (storage.where === "browser" || storage.status === "error") {
     return (
       <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300">
