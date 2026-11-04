@@ -31,6 +31,7 @@ jobs:
           STATIC_EXPORT: "1"
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
           NEXT_PUBLIC_RULES_STORAGE: browser
+          NEXT_PUBLIC_SITE_URL: https://${{ github.repository_owner }}.github.io
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

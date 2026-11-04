@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How statement reading works
+    url: https://github.com/tahir606/statement-processor/blob/main/docs/how-it-works.md
+    about: Read this first. It explains how layouts are recognised.

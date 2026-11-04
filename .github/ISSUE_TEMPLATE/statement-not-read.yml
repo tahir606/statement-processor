@@ -1,0 +1,46 @@
+name: A statement wasn't read correctly
+description: Missing rows, wrong amounts, wrong dates or anything else the app got wrong.
+labels: ["statement layout"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please don't attach your statement, screenshots of it, or real numbers.** Issues are public.
+        Describe the layout instead. Made-up values in the same format are perfect.
+  - type: input
+    id: bank
+    attributes:
+      label: Bank or card issuer
+      placeholder: e.g. HBL credit card, Barclays current account
+    validations:
+      required: true
+  - type: dropdown
+    id: file
+    attributes:
+      label: File type
+      options:
+        - PDF downloaded from online banking
+        - Scanned PDF or photo
+        - CSV export
+    validations:
+      required: true
+  - type: textarea
+    id: columns
+    attributes:
+      label: Column headers, exactly as printed
+      placeholder: e.g. Transaction Date | Posting Date | Description | Amount (PKR)
+    validations:
+      required: true
+  - type: textarea
+    id: formats
+    attributes:
+      label: How dates and amounts look
+      description: Use made-up values in the same format.
+      placeholder: e.g. dates like 05-10-2026, amounts like "PKR 1,234.56" and refunds as "1,234.56 CR"
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What went wrong
+      placeholder: e.g. rows with two-line descriptions are missing, foreign amounts are used instead of PKR
+    validations:
+      required: true

@@ -111,6 +111,14 @@ export default function StatementProcessor() {
 
   // Summary cards describe everything loaded (or the chosen statement); the table footer totals the current view.
   const summary = useMemo(() => summarize(inFile), [inFile]);
+  const hasBank = inFile.some((t) => t.accountKind === "bank");
+  const cardTotals = useMemo(() => {
+    const credits = inFile.filter((t) => t.accountKind === "card" && t.amount > 0);
+    return {
+      payments: credits.filter((t) => t.transfer).reduce((s, t) => s + t.amount, 0),
+      refunds: credits.filter((t) => !t.transfer).reduce((s, t) => s + t.amount, 0),
+    };
+  }, [inFile]);
   const results = files.flatMap((f) => (f.result && (fileFilter === "all" || f.file.name === fileFilter) ? [f.result] : []));
 
   const openRules = (ruleId?: string) => {
@@ -166,9 +174,20 @@ export default function StatementProcessor() {
           <div className="space-y-6">
             <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <Stat label="Transactions" value={String(inFile.length)} hint={busy ? "Reading files…" : `from ${files.length} file${files.length === 1 ? "" : "s"}`} />
-              <Stat label="Money in" value={fmt(summary.income)} tone="green" />
-              <Stat label="Spent" value={fmt(summary.spending)} hint="bank and cards, after refunds" />
-              <Stat label="Left over" value={`${summary.net < 0 ? "−" : ""}${fmt(Math.abs(summary.net))}`} tone={summary.net < 0 ? "red" : "green"} />
+              {hasBank ? (
+                <>
+                  <Stat label="Money in" value={fmt(summary.income)} tone="green" />
+                  <Stat label="Spent" value={fmt(summary.spending)} hint="bank and cards, after refunds" />
+                  <Stat label="Left over" value={`${summary.net < 0 ? "−" : ""}${fmt(Math.abs(summary.net))}`} tone={summary.net < 0 ? "red" : "green"} />
+                </>
+              ) : (
+                // Card statements only: there's no income to compare with, so show what happened on the cards.
+                <>
+                  <Stat label="Spent on cards" value={fmt(summary.spending)} hint="after refunds" />
+                  <Stat label="Paid to cards" value={fmt(cardTotals.payments)} hint="payments you made" />
+                  <Stat label="Refunds" value={fmt(cardTotals.refunds)} hint="money back from shops" />
+                </>
+              )}
               <button
                 onClick={() => {
                   setView(reviewCount ? "review" : "all");
@@ -278,6 +297,8 @@ export default function StatementProcessor() {
         )}
       </main>
 
+      <Footer />
+
       <input
         ref={inputRef}
         type="file"
@@ -312,6 +333,41 @@ export default function StatementProcessor() {
         focusRuleId={focusRuleId}
       />
     </div>
+  );
+}
+
+const REPO = "https://github.com/tahir606/statement-processor";
+
+function Footer() {
+  return (
+    <footer className="mt-auto border-t border-line">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-4 py-6 text-xs text-muted sm:px-6 md:flex-row md:items-start md:justify-between">
+        <div className="max-w-2xl space-y-1">
+          <p className="flex items-center gap-1.5 font-medium text-foreground">
+            <Lock className="size-3.5" /> Your statements never leave this device.
+          </p>
+          <p>
+            Files are read inside your browser. Nothing is uploaded, stored on a server or tracked, and there&apos;s no account. Scanned PDFs download the
+            OCR language data once from a public CDN; your file isn&apos;t sent with it.
+          </p>
+          <p>
+            Results are produced automatically and can be wrong, so check them against your statement before relying on them. This is not financial
+            advice.
+          </p>
+        </div>
+        <nav className="flex shrink-0 flex-wrap gap-x-4 gap-y-1">
+          <a className="hover:text-foreground hover:underline" href={`${REPO}/issues/new?template=statement-not-read.yml`} target="_blank" rel="noreferrer">
+            Report a problem
+          </a>
+          <a className="hover:text-foreground hover:underline" href={`${REPO}/blob/main/docs/how-it-works.md`} target="_blank" rel="noreferrer">
+            How it works
+          </a>
+          <a className="hover:text-foreground hover:underline" href={REPO} target="_blank" rel="noreferrer">
+            Source code (MIT)
+          </a>
+        </nav>
+      </div>
+    </footer>
   );
 }
 

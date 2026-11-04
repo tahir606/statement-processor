@@ -128,6 +128,7 @@ CSV columns can also be remapped in the UI ("Column mapping"). Please contribute
 - **CSV dates may change when opened.** Spreadsheet apps reformat date text when they open a CSV. Use **Export Excel** to keep the `DD-Mmm-YY` format.
 - **Password-protected PDFs aren't supported yet.**
 - **Always review flagged rows.** OCR on poor scans can misread characters.
+- **Dependency audit.** `npm audit` reports moderate issues in packages used by `exceljs` (archiver, glob, minimatch). They only run in Node when reading the file system, so they aren't reachable in the browser app or the hosted site. `uuid` is pinned to a fixed version through `overrides`.
 
 ## License
 
