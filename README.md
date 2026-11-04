@@ -48,6 +48,8 @@ Open http://localhost:3000 and drop in your statements. Running it yourself save
 
 ## How it works
 
+Full explanation: [docs/how-it-works.md](docs/how-it-works.md).
+
 | Input | Pipeline |
 | --- | --- |
 | **CSV** | `papaparse` → find the header row (skipping account-info lines above it) → map columns by header keywords → parse dates and amounts |
